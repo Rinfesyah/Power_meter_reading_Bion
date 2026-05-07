@@ -30,7 +30,7 @@ export async function performBackendOCR(
   return {
     imageUrl: data.image_url || '',
     filename: data.filename || '',
-    status: data.status || 'unknown',
+    ocrStatus: data.status || 'unknown',
     message: data.message || '',
   };
 }

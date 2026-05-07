@@ -140,6 +140,7 @@ const MobileOperatorView: React.FC<Props> = ({ panels, readings, onSave }) => {
       }
 
       const newReading: InstrumentReading = {
+        ...ocrResult,
         id: Date.now().toString(),
         timestamp: Date.now(),
         imageUrl: (ocrResult as any).imageUrl || base64Preview,
@@ -149,7 +150,6 @@ const MobileOperatorView: React.FC<Props> = ({ panels, readings, onSave }) => {
         shift: session?.shift || '1',
         hour: session?.hour || '',
         status: ReadingStatus.PENDING,
-        ...ocrResult
       };
 
       onSave(newReading);
