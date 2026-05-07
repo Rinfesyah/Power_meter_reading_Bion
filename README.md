@@ -1,9 +1,3 @@
-# Run and deploy your AI Studio app
-
-This contains everything you need to run your app locally.
-
-View your app in AI Studio: https://ai.studio/apps/drive/1ndMC9-aK-DHUygIq7tpPk-qWUcI0wScA
-
 ## 🚀 Cara Menjalankan Aplikasi
 
 Aplikasi ini terdiri dari tiga bagian: **Backend**, **Frontend Mobile**, dan **Frontend Dashboard**.
