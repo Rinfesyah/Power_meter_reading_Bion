@@ -1,0 +1,7 @@
+{
+  "name": "DC-Ops OCR",
+  "description": "Data Center Operational Reporting System with OCR Automation. Extracts instrument panel data (Voltage, Temp, etc.) via AI.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
