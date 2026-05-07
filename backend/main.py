@@ -6,7 +6,7 @@ import shutil
 import os
 import datetime
 import json
-import csv # Added for CSV logging
+import csv
 from typing import List, Optional
 from pydantic import BaseModel
 from ocr_engine import process_image, learn_correction
@@ -17,6 +17,23 @@ class PanelModel(BaseModel):
     location: str
     type: str # "Digital" or "Analog"
     parameters: List[str] = []
+
+class ReadingModel(BaseModel):
+    id: str
+    timestamp: float
+    imageUrl: str = ""
+    panelId: str
+    panelName: str
+    operatorName: str = "Unknown"
+    shift: str = "1"
+    hour: str = ""
+    voltage: Optional[float] = None
+    current: Optional[float] = None
+    temperature: Optional[float] = None
+    humidity: Optional[float] = None
+    power: Optional[float] = None
+    status: str = "PENDING"
+    notes: str = ""
 
 class LearnRequest(BaseModel):
     panel_name: str
@@ -39,6 +56,7 @@ BASE_DB_PATH = "D:/Program/IDP/database"
 PHOTO_BASE_PATH = os.path.join(BASE_DB_PATH, "foto")
 CSV_PATH = os.path.join(BASE_DB_PATH, "readings.csv")
 PANELS_DB_PATH = os.path.join(BASE_DB_PATH, "panels.json")
+READINGS_DB_PATH = os.path.join(BASE_DB_PATH, "readings.json")
 
 # Ensure base folders exist
 os.makedirs(PHOTO_BASE_PATH, exist_ok=True)
@@ -46,15 +64,8 @@ os.makedirs(PHOTO_BASE_PATH, exist_ok=True)
 # Mount the photo directory to be accessible via HTTP
 app.mount("/images", StaticFiles(directory=PHOTO_BASE_PATH), name="images")
 
-@app.post("/api/learn")
-def learn_endpoint(req: LearnRequest):
-    """
-    Endpoint to trigger learning from user correction.
-    """
-    success = learn_correction(req.panel_name, req.readings, req.raw_text)
-    return {"status": "success" if success else "no_match", "message": "Memory updated" if success else "Could not match values in raw text"}
+# ====== HELPERS ======
 
-# Helper to read/write panels
 def read_panels():
     if not os.path.exists(PANELS_DB_PATH):
         return []
@@ -68,6 +79,21 @@ def write_panels(panels):
     with open(PANELS_DB_PATH, 'w') as f:
         json.dump(panels, f, indent=2)
 
+def read_readings():
+    if not os.path.exists(READINGS_DB_PATH):
+        return []
+    try:
+        with open(READINGS_DB_PATH, 'r') as f:
+            return json.load(f)
+    except:
+        return []
+
+def write_readings(readings_list):
+    with open(READINGS_DB_PATH, 'w') as f:
+        json.dump(readings_list, f, indent=2)
+
+# ====== PANELS CRUD ======
+
 @app.get("/api/panels", response_model=List[PanelModel])
 def get_panels():
     return read_panels()
@@ -75,12 +101,9 @@ def get_panels():
 @app.post("/api/panels", response_model=List[PanelModel])
 def add_panel(panel: PanelModel):
     panels = read_panels()
-    # Check duplicate ID
     if any(p['id'] == panel.id for p in panels):
-        # Update existing
         panels = [panel.dict() if p['id'] == panel.id else p for p in panels]
     else:
-        # Add new
         panels.append(panel.dict())
     write_panels(panels)
     return panels
@@ -99,19 +122,53 @@ def delete_panel(panel_id: str):
     write_panels(panels)
     return panels
 
-# ... (rest of code)
+# ====== READINGS CRUD ======
+
+@app.get("/api/readings")
+def get_readings():
+    """Return all readings from the JSON database."""
+    return read_readings()
+
+@app.post("/api/readings")
+def add_reading(reading: ReadingModel):
+    """Add a new reading (called by Mobile after upload)."""
+    readings_list = read_readings()
+    readings_list.insert(0, reading.dict())
+    write_readings(readings_list)
+    return {"status": "ok", "total": len(readings_list)}
+
+@app.put("/api/readings/{reading_id}")
+def update_reading(reading_id: str, reading: ReadingModel):
+    """Update a reading (called by Dashboard for verification/editing)."""
+    readings_list = read_readings()
+    readings_list = [reading.dict() if r['id'] == reading_id else r for r in readings_list]
+    write_readings(readings_list)
+    return {"status": "ok"}
+
+@app.delete("/api/readings/{reading_id}")
+def delete_reading(reading_id: str):
+    """Delete a reading."""
+    readings_list = read_readings()
+    readings_list = [r for r in readings_list if r['id'] != reading_id]
+    write_readings(readings_list)
+    return {"status": "ok"}
+
+# ====== LEARN ======
+
+@app.post("/api/learn")
+def learn_endpoint(req: LearnRequest):
+    """Endpoint to trigger learning from user correction."""
+    success = learn_correction(req.panel_name, req.readings, req.raw_text)
+    return {"status": "success" if success else "no_match", "message": "Memory updated" if success else "Could not match values in raw text"}
+
+# ====== OCR ======
 
 def process_and_log_background(file_path: str, panel_name: str, shift: str, operator: str):
-    """
-    Background worker that runs the heavy OCR and logging.
-    """
+    """Background worker that runs the heavy OCR and logging."""
     try:
-        # 1. Heavy OCR with Smart Memory
-        ocr_data = process_image(file_path, panel_name) # Pass panel_name for memory!
+        ocr_data = process_image(file_path, panel_name)
         readings = ocr_data.get("readings", {})
         
-        # 2. Log to CSV
-        # ... (CSV Logging logic remains same) ...
         now = datetime.datetime.now()
         today_str = datetime.date.today().isoformat()
         time_str = now.strftime("%H-%M-%S")
@@ -138,9 +195,6 @@ def process_and_log_background(file_path: str, panel_name: str, shift: str, oper
             ])
         print(f"Background Job: Processed {file_path} successfully (Memory Used: {ocr_data.get('confidence')})")
         
-        # SAVE RAW JSON for Frontend to access later? 
-        # Actually, for async flow, how does frontend get the 'raw_text' to send back to /api/learn?
-        # WE NEED TO SAVE IT.
         json_path = file_path + ".json"
         with open(json_path, 'w') as f:
             json.dump(ocr_data, f)
@@ -150,17 +204,9 @@ def process_and_log_background(file_path: str, panel_name: str, shift: str, oper
 
 @app.get("/api/reading/{filename}")
 def get_reading_result(filename: str):
-    """
-    Helper to retrieve the async result (and raw text) for a specific file.
-    Used by Frontend if it wants to check status or get raw text for learning.
-    """
-    # The frontend sends the full filename like "16-53-12_Panel_3_blob.jpg"
-    # We saved JSON as "16-53-12_Panel_3_blob.jpg.json"
-    
-    # Search for the JSON file
+    """Helper to retrieve the async OCR result for a specific file."""
     for root, dirs, files in os.walk(PHOTO_BASE_PATH):
         for file in files:
-            # Match: filename.jpg.json or filename.json
             if file == filename + ".json" or file == filename:
                 json_file = os.path.join(root, file)
                 try:
@@ -168,7 +214,6 @@ def get_reading_result(filename: str):
                         return json.load(f)
                 except:
                     pass
-    
     return {"status": "processing_or_not_found"}
 
 @app.post("/api/ocr")
@@ -180,36 +225,30 @@ async def ocr_endpoint(
     shift: str = Form(...),
     operator: str = Form("Unknown")
 ):
-    # ... (Same logic, just ensure we pass panel_name to background)
     try:
-        # 1. Generate Folder Path
         today_str = datetime.date.today().isoformat()
-        folder_name = f"{today_str} - {shift}"
+        folder_name = f"{today_str} - Shift {shift}"
         target_folder = os.path.join(PHOTO_BASE_PATH, folder_name)
         os.makedirs(target_folder, exist_ok=True)
 
-        # 2. Generate File Name
         now = datetime.datetime.now()
         time_str = now.strftime("%H-%M-%S")
         safe_panel_name = "".join([c for c in panel_name if c.isalnum() or c in (' ', '-', '_')]).strip()
         filename = f"{time_str}_{safe_panel_name}_{file.filename}"
         file_location = os.path.join(target_folder, filename)
 
-        # 3. Save Image
         with open(file_location, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
             
-        # 4. Enqueue Background Task
         background_tasks.add_task(process_and_log_background, file_location, panel_name, shift, operator)
 
-        # 5. Return Response (Include ID for polling if needed)
         from urllib.parse import quote
         image_url = str(request.base_url) + f"images/{quote(folder_name)}/{filename}"
         
         return {
             "status": "queued",
             "message": "Upload accepted. OCR processing in background.",
-            "filename": filename, # Used for lookup later
+            "filename": filename,
             "image_url": image_url
         }
 
@@ -218,6 +257,4 @@ async def ocr_endpoint(
         return {"status": "error", "message": str(e)}
 
 if __name__ == "__main__":
-    # Reload=True requires the script to be run as a module or string path, 
-    # but direct python main.py works too if code doesn't change often.
     uvicorn.run(app, host="0.0.0.0", port=8000)

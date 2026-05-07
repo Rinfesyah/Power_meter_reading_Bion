@@ -1,14 +1,9 @@
+import { InstrumentReading } from '../types';
+
 const BACKEND_URL = 'http://localhost:8000';
 
 /**
  * Sends an image file to the Python FastAPI backend for OCR processing.
- * The backend saves the image, queues background OCR, and returns a response.
- *
- * @param file - The image file captured by the operator
- * @param panelName - Name of the panel being photographed
- * @param shift - Current shift (Morning, Afternoon, Night)
- * @param operatorName - Name of the operator
- * @returns OCR result object with readings and image URL
  */
 export async function performBackendOCR(
   file: File,
@@ -32,9 +27,6 @@ export async function performBackendOCR(
   }
 
   const data = await response.json();
-
-  // If backend returns a queued status, the OCR runs in background.
-  // We return whatever data is available immediately (image_url, filename, etc.)
   return {
     imageUrl: data.image_url || '',
     filename: data.filename || '',
@@ -44,18 +36,63 @@ export async function performBackendOCR(
 }
 
 /**
+ * Save a reading to the backend database.
+ */
+export async function saveReading(reading: InstrumentReading): Promise<void> {
+  const response = await fetch(`${BACKEND_URL}/api/readings`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(reading),
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to save reading: ${response.status}`);
+  }
+}
+
+/**
+ * Fetch all readings from the backend.
+ */
+export async function fetchReadings(): Promise<InstrumentReading[]> {
+  const response = await fetch(`${BACKEND_URL}/api/readings`);
+  if (!response.ok) {
+    throw new Error(`Failed to fetch readings: ${response.status}`);
+  }
+  return response.json();
+}
+
+/**
+ * Update a reading on the backend.
+ */
+export async function updateReading(reading: InstrumentReading): Promise<void> {
+  const response = await fetch(`${BACKEND_URL}/api/readings/${reading.id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(reading),
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to update reading: ${response.status}`);
+  }
+}
+
+/**
+ * Delete a reading from the backend.
+ */
+export async function deleteReading(id: string): Promise<void> {
+  const response = await fetch(`${BACKEND_URL}/api/readings/${id}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to delete reading: ${response.status}`);
+  }
+}
+
+/**
  * Polls the backend for the OCR result of a specific file.
- * Used when the initial upload returns "queued" status.
- *
- * @param filename - The filename returned from the upload
- * @returns The OCR reading data if available
  */
 export async function getReadingResult(filename: string): Promise<Record<string, any>> {
   const response = await fetch(`${BACKEND_URL}/api/reading/${filename}`);
-
   if (!response.ok) {
     throw new Error(`Failed to get reading: ${response.status}`);
   }
-
   return response.json();
 }

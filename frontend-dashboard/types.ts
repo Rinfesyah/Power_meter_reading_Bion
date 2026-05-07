@@ -9,7 +9,7 @@ export enum ReadingStatus {
   REJECTED = 'REJECTED'
 }
 
-export type Shift = 'Morning' | 'Afternoon' | 'Night';
+export type Shift = '1' | '2' | '3';
 
 export type PanelParameter = 'voltage' | 'current' | 'temperature' | 'humidity' | 'power';
 
@@ -28,7 +28,8 @@ export interface InstrumentReading {
   panelId: string;
   panelName: string; // Denormalized for easier display
   operatorName: string;
-  shift: Shift; // New field for reporting
+  shift: Shift;
+  hour?: string; // Format "HH:MM"
 
   // Metrics
   voltage?: number; // V

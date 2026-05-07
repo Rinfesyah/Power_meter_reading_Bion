@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Camera, ChevronRight, Search, CheckCircle, Wifi, Battery, Server, ArrowLeft, Loader2, User, Clock, Briefcase, RotateCcw, UploadCloud } from 'lucide-react';
+import { Camera, ChevronRight, Search, CheckCircle, Wifi, Battery, Server, ArrowLeft, Loader2, User, Clock, Briefcase, RotateCcw, UploadCloud, ImageIcon } from 'lucide-react';
 import { InstrumentReading, Panel, ReadingStatus, Shift } from '../types';
 import { performBackendOCR } from '../services/backendService';
 
@@ -12,13 +12,24 @@ interface Props {
 interface OperatorSession {
   name: string;
   shift: Shift;
+  hour: string;
 }
+
+const SHIFT_OPTIONS: { value: Shift; label: string }[] = [
+  { value: '1', label: 'Shift 1' },
+  { value: '2', label: 'Shift 2' },
+  { value: '3', label: 'Shift 3' },
+];
 
 const MobileOperatorView: React.FC<Props> = ({ panels, readings, onSave }) => {
   // Session State
   const [session, setSession] = useState<OperatorSession | null>(null);
   const [tempName, setTempName] = useState('');
-  const [tempShift, setTempShift] = useState<Shift>('Morning');
+  const [tempShift, setTempShift] = useState<Shift>('1');
+  const [tempHour, setTempHour] = useState(() => {
+    const now = new Date();
+    return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  });
 
   // App State
   const [selectedPanel, setSelectedPanel] = useState<Panel | null>(null);
@@ -34,18 +45,44 @@ const MobileOperatorView: React.FC<Props> = ({ panels, readings, onSave }) => {
     p.location.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  // Helper: Get existing reading for a panel in current shift+hour
+  const getExistingReading = (panelId: string): InstrumentReading | undefined => {
+    if (!session) return undefined;
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    return readings.find(r =>
+      r.panelId === panelId &&
+      r.shift === session.shift &&
+      r.hour === session.hour &&
+      r.timestamp >= todayStart.getTime()
+    );
+  };
+
   // Login Handler
   const handleLogin = () => {
     if (tempName.trim()) {
-      setSession({ name: tempName, shift: tempShift });
+      setSession({ name: tempName, shift: tempShift, hour: tempHour });
       setStep('list');
     } else {
-      alert("Please enter your name");
+      alert("Masukkan nama Anda");
     }
   };
 
   const handlePanelSelect = (panel: Panel) => {
     setSelectedPanel(panel);
+
+    // Check for existing reading
+    const existing = getExistingReading(panel.id);
+    if (existing && existing.imageUrl) {
+      // Show existing photo
+      setImage(existing.imageUrl);
+      setSelectedFile(null); // No new file selected
+    } else {
+      setImage(null);
+      setSelectedFile(null);
+    }
+
     setStep('camera');
   };
 
@@ -57,11 +94,9 @@ const MobileOperatorView: React.FC<Props> = ({ panels, readings, onSave }) => {
         const base64 = reader.result as string;
         setImage(base64);
         setSelectedFile(file);
-        // Do not upload immediately, wait for user confirmation
       };
       reader.readAsDataURL(file);
     }
-    // Reset file input so the same file can be selected again if needed
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
@@ -70,6 +105,14 @@ const MobileOperatorView: React.FC<Props> = ({ panels, readings, onSave }) => {
   const handleRetake = () => {
     setImage(null);
     setSelectedFile(null);
+  };
+
+  const handleReupload = () => {
+    // Reset to allow new upload
+    setImage(null);
+    setSelectedFile(null);
+    // Open file picker
+    setTimeout(() => fileInputRef.current?.click(), 100);
   };
 
   const handleSavePhoto = () => {
@@ -89,7 +132,7 @@ const MobileOperatorView: React.FC<Props> = ({ panels, readings, onSave }) => {
         ocrResult = await performBackendOCR(
           file,
           selectedPanel!.name,
-          session?.shift || 'Morning',
+          session?.shift || '1',
           session?.name || 'Unknown'
         );
       } catch (ocrError) {
@@ -103,7 +146,8 @@ const MobileOperatorView: React.FC<Props> = ({ panels, readings, onSave }) => {
         panelId: selectedPanel!.id,
         panelName: selectedPanel!.name,
         operatorName: session?.name || 'Unknown',
-        shift: session?.shift || 'Morning',
+        shift: session?.shift || '1',
+        hour: session?.hour || '',
         status: ReadingStatus.PENDING,
         ...ocrResult
       };
@@ -112,7 +156,7 @@ const MobileOperatorView: React.FC<Props> = ({ panels, readings, onSave }) => {
       setStep('success');
     } catch (e) {
       console.error("Critical Upload Error:", e);
-      alert("Failed to upload data. Please try again.");
+      alert("Gagal mengupload data. Silakan coba lagi.");
     } finally {
       setIsUploading(false);
     }
@@ -132,17 +176,11 @@ const MobileOperatorView: React.FC<Props> = ({ panels, readings, onSave }) => {
 
   // Helper to check completion status
   const isPanelCompleted = (panelId: string) => {
-    if (!session) return false;
-    // Check if there is a reading for this panel, this shift, and today
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-
-    return readings.some(r =>
-      r.panelId === panelId &&
-      r.shift === session.shift &&
-      r.timestamp >= todayStart.getTime()
-    );
+    return !!getExistingReading(panelId);
   };
+
+  // Check if the current image is from an existing reading (not a new file)
+  const isExistingImage = image && !selectedFile;
 
   // --- View: Login Screen ---
   if (step === 'login') {
@@ -159,34 +197,47 @@ const MobileOperatorView: React.FC<Props> = ({ panels, readings, onSave }) => {
 
           <div className="bg-slate-800 p-6 rounded-2xl shadow-xl space-y-6 border border-slate-700">
             <div>
-              <label className="block text-xs font-medium text-slate-400 uppercase tracking-wider mb-2">Operator Name</label>
+              <label className="block text-xs font-medium text-slate-400 uppercase tracking-wider mb-2">Nama Operator</label>
               <div className="relative">
                 <User className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
                 <input
                   type="text"
                   value={tempName}
                   onChange={(e) => setTempName(e.target.value)}
-                  placeholder="Enter your name"
+                  placeholder="Masukkan nama anda"
                   className="w-full bg-slate-900 border border-slate-600 rounded-xl py-3 pl-10 pr-4 text-white placeholder-slate-600 focus:outline-none focus:border-blue-500 transition-colors"
                 />
               </div>
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-slate-400 uppercase tracking-wider mb-2">Select Shift</label>
+              <label className="block text-xs font-medium text-slate-400 uppercase tracking-wider mb-2">Pilih Shift</label>
               <div className="grid grid-cols-3 gap-2">
-                {(['Morning', 'Afternoon', 'Night'] as Shift[]).map((s) => (
+                {SHIFT_OPTIONS.map((s) => (
                   <button
-                    key={s}
-                    onClick={() => setTempShift(s)}
-                    className={`py-2 rounded-lg text-sm font-medium transition-colors border ${tempShift === s
+                    key={s.value}
+                    onClick={() => setTempShift(s.value)}
+                    className={`py-2 rounded-lg text-sm font-medium transition-colors border ${tempShift === s.value
                       ? 'bg-blue-600 border-blue-600 text-white'
                       : 'bg-slate-900 border-slate-600 text-slate-400 hover:border-slate-500'
                       }`}
                   >
-                    {s}
+                    {s.label}
                   </button>
                 ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-400 uppercase tracking-wider mb-2">Pilih Jam</label>
+              <div className="relative">
+                <Clock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
+                <input
+                  type="time"
+                  value={tempHour}
+                  onChange={(e) => setTempHour(e.target.value)}
+                  className="w-full bg-slate-900 border border-slate-600 rounded-xl py-3 pl-10 pr-4 text-white focus:outline-none focus:border-blue-500 transition-colors"
+                />
               </div>
             </div>
 
@@ -194,7 +245,7 @@ const MobileOperatorView: React.FC<Props> = ({ panels, readings, onSave }) => {
               onClick={handleLogin}
               className="w-full bg-blue-500 hover:bg-blue-400 text-white py-4 rounded-xl font-bold shadow-lg shadow-blue-900/20 active:scale-95 transition-all mt-4"
             >
-              Start Shift
+              Mulai Shift
             </button>
           </div>
 
@@ -211,15 +262,15 @@ const MobileOperatorView: React.FC<Props> = ({ panels, readings, onSave }) => {
         <div className="w-24 h-24 bg-green-100 rounded-full flex items-center justify-center mb-6 shadow-sm">
           <CheckCircle className="w-12 h-12 text-green-600" />
         </div>
-        <h2 className="text-2xl font-bold text-gray-800 mb-2">Upload Complete</h2>
+        <h2 className="text-2xl font-bold text-gray-800 mb-2">Upload Berhasil</h2>
         <p className="text-gray-600 mb-8 max-w-xs">
-          Reading for <span className="font-semibold text-gray-900">{selectedPanel?.name}</span> captured successfully.
+          Data untuk <span className="font-semibold text-gray-900">{selectedPanel?.name}</span> berhasil disimpan.
         </p>
         <button
           onClick={reset}
           className="w-full bg-blue-600 text-white py-4 rounded-xl font-bold shadow-lg active:scale-95 transition-transform"
         >
-          Next Panel
+          Panel Berikutnya
         </button>
       </div>
     );
@@ -233,7 +284,7 @@ const MobileOperatorView: React.FC<Props> = ({ panels, readings, onSave }) => {
       <div className="bg-slate-900 text-white p-4 pt-10 pb-4 rounded-b-3xl shadow-md z-20 flex justify-between items-center sticky top-0">
         <div className="flex items-center gap-3">
           {step === 'camera' ? (
-            <button onClick={() => setStep('list')} className="p-1 hover:bg-slate-800 rounded-full">
+            <button onClick={() => { setStep('list'); setImage(null); setSelectedFile(null); }} className="p-1 hover:bg-slate-800 rounded-full">
               <ArrowLeft size={20} />
             </button>
           ) : (
@@ -244,7 +295,7 @@ const MobileOperatorView: React.FC<Props> = ({ panels, readings, onSave }) => {
           <div>
             <h1 className="text-lg font-bold">Field Ops</h1>
             <p className="text-slate-400 text-[10px] uppercase tracking-wider flex items-center gap-1">
-              {session?.name} • <span className="text-blue-400">{session?.shift} Shift</span>
+              {session?.name} • <span className="text-blue-400">Shift {session?.shift}</span> • <span className="text-green-400">{session?.hour}</span>
             </p>
           </div>
         </div>
@@ -264,7 +315,7 @@ const MobileOperatorView: React.FC<Props> = ({ panels, readings, onSave }) => {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
               <input
                 type="text"
-                placeholder="Search panel..."
+                placeholder="Cari panel..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-xl shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
@@ -273,7 +324,7 @@ const MobileOperatorView: React.FC<Props> = ({ panels, readings, onSave }) => {
 
             {/* List */}
             <div className="space-y-2">
-              <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider ml-1">Assigned Panels</h3>
+              <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider ml-1">Daftar Panel</h3>
               {filteredPanels.map((panel) => {
                 const isCompleted = isPanelCompleted(panel.id);
                 return (
@@ -306,7 +357,7 @@ const MobileOperatorView: React.FC<Props> = ({ panels, readings, onSave }) => {
 
               {filteredPanels.length === 0 && (
                 <div className="text-center py-10 text-gray-400">
-                  <p>No panels found.</p>
+                  <p>Panel tidak ditemukan.</p>
                 </div>
               )}
             </div>
@@ -320,44 +371,75 @@ const MobileOperatorView: React.FC<Props> = ({ panels, readings, onSave }) => {
             {isUploading ? (
               <div className="flex flex-col items-center justify-center animate-pulse">
                 <Loader2 className="w-16 h-16 text-blue-600 animate-spin mb-4" />
-                <h3 className="text-xl font-bold text-gray-800">Uploading...</h3>
-                <p className="text-sm text-gray-500">Syncing to server</p>
+                <h3 className="text-xl font-bold text-gray-800">Mengupload...</h3>
+                <p className="text-sm text-gray-500">Menyimpan ke server</p>
               </div>
             ) : image ? (
-              // --- Preview Mode ---
+              // --- Preview Mode (new photo OR existing photo) ---
               <div className="flex flex-col items-center h-full">
                 <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 text-center mb-6 w-full">
                   <h3 className="text-lg font-semibold text-gray-800 mb-1">{selectedPanel?.name}</h3>
-                  <p className="text-sm text-gray-500">Preview Capture</p>
+                  <p className="text-sm text-gray-500">
+                    {isExistingImage ? 'Foto yang sudah diupload' : 'Preview Foto'}
+                  </p>
                 </div>
 
                 <div className="w-full bg-black rounded-3xl overflow-hidden mb-6 flex items-center justify-center relative shadow-lg flex-1 min-h-[300px]">
                   <img src={image} alt="Preview" className="w-full h-full object-contain" />
+                  {isExistingImage && (
+                    <div className="absolute top-3 right-3 bg-green-500 text-white px-3 py-1 rounded-full text-xs font-bold">
+                      ✓ Sudah Diupload
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex gap-4 w-full">
-                  <button
-                    onClick={handleRetake}
-                    className="flex-1 py-4 border border-gray-300 bg-white text-gray-700 rounded-xl font-bold hover:bg-gray-50 transition-colors flex items-center justify-center gap-2"
-                  >
-                    <RotateCcw size={20} />
-                    Retake
-                  </button>
-                  <button
-                    onClick={handleSavePhoto}
-                    className="flex-1 py-4 bg-blue-600 text-white rounded-xl font-bold shadow-lg shadow-blue-900/20 active:scale-95 transition-all flex items-center justify-center gap-2"
-                  >
-                    <UploadCloud size={20} />
-                    Save
-                  </button>
+                  {isExistingImage ? (
+                    // Existing photo: show reupload button
+                    <button
+                      onClick={handleReupload}
+                      className="flex-1 py-4 bg-orange-500 text-white rounded-xl font-bold shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2"
+                    >
+                      <RotateCcw size={20} />
+                      Upload Ulang
+                    </button>
+                  ) : (
+                    // New photo: show retake + save
+                    <>
+                      <button
+                        onClick={handleRetake}
+                        className="flex-1 py-4 border border-gray-300 bg-white text-gray-700 rounded-xl font-bold hover:bg-gray-50 transition-colors flex items-center justify-center gap-2"
+                      >
+                        <RotateCcw size={20} />
+                        Ulangi
+                      </button>
+                      <button
+                        onClick={handleSavePhoto}
+                        className="flex-1 py-4 bg-blue-600 text-white rounded-xl font-bold shadow-lg shadow-blue-900/20 active:scale-95 transition-all flex items-center justify-center gap-2"
+                      >
+                        <UploadCloud size={20} />
+                        Simpan
+                      </button>
+                    </>
+                  )}
                 </div>
+
+                {/* Hidden file input for reupload */}
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  className="hidden"
+                  accept="image/*"
+                  capture="environment"
+                  onChange={handleFileChange}
+                />
               </div>
             ) : (
               // --- Camera/Select Mode ---
               <>
                 <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 text-center mb-6">
                   <h3 className="text-lg font-semibold text-gray-800 mb-1">{selectedPanel?.name}</h3>
-                  <p className="text-sm text-gray-500">Capture the display clearly.</p>
+                  <p className="text-sm text-gray-500">Ambil foto display dengan jelas.</p>
                 </div>
 
                 <div
@@ -370,8 +452,8 @@ const MobileOperatorView: React.FC<Props> = ({ panels, readings, onSave }) => {
                   <div className="bg-white p-5 rounded-full shadow-lg mb-4 z-10 group-active:scale-95 transition-transform">
                     <Camera className="w-12 h-12 text-blue-600" />
                   </div>
-                  <span className="text-blue-700 font-bold z-10">Tap to Take Photo</span>
-                  <span className="text-xs text-blue-400 mt-1 z-10">or select from gallery</span>
+                  <span className="text-blue-700 font-bold z-10">Tap untuk Ambil Foto</span>
+                  <span className="text-xs text-blue-400 mt-1 z-10">atau pilih dari galeri</span>
 
                   <input
                     type="file"

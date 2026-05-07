@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { InstrumentReading, Panel, ReadingStatus } from './types';
 import WebDashboard from './components/WebDashboard';
 
-// Demo Data
+const BACKEND_URL = 'http://localhost:8000';
+
 const DEFAULT_PANELS: Panel[] = [
   { id: 'p1', name: 'Panel-001', location: 'Zone A', type: 'Digital', parameters: ['voltage', 'current', 'power'] },
   { id: 'p2', name: 'Panel-002', location: 'Zone A', type: 'Digital', parameters: ['voltage', 'current', 'power'] },
@@ -12,27 +13,17 @@ const DEFAULT_PANELS: Panel[] = [
   { id: 'p6', name: 'PAC B', location: 'Cooling', type: 'Digital', parameters: ['temperature', 'humidity'] },
 ];
 
-const DEMO_READINGS: InstrumentReading[] = [
-  {
-    id: '1', timestamp: Date.now() - 10000000, imageUrl: 'https://picsum.photos/100', panelId: 'p1', panelName: 'Panel-001', operatorName: 'John', shift: 'Morning', status: ReadingStatus.VERIFIED,
-    voltage: 220.5, current: 10.2, temperature: 24.5, power: 2.2
-  }
-];
-
 const App: React.FC = () => {
-  const [readings, setReadings] = useState<InstrumentReading[]>(() => {
-    const saved = localStorage.getItem('dc_readings');
-    return saved ? JSON.parse(saved) : DEMO_READINGS;
-  });
-
+  const [readings, setReadings] = useState<InstrumentReading[]>([]);
   const [panels, setPanels] = useState<Panel[]>(DEFAULT_PANELS);
 
   const [googleSheetUrl, setGoogleSheetUrl] = useState<string>(() => {
     return localStorage.getItem('dc_sheet_url') || '';
   });
 
+  // Load panels from backend
   useEffect(() => {
-    fetch('http://localhost:8000/api/panels')
+    fetch(`${BACKEND_URL}/api/panels`)
       .then(res => res.json())
       .then(data => {
         if (Array.isArray(data)) {
@@ -42,22 +33,62 @@ const App: React.FC = () => {
       .catch(err => console.error("Failed to load panels:", err));
   }, []);
 
-  useEffect(() => {
-    localStorage.setItem('dc_readings', JSON.stringify(readings));
-    localStorage.setItem('dc_sheet_url', googleSheetUrl);
-  }, [readings, googleSheetUrl]);
+  // Load readings from backend
+  const loadReadings = useCallback(async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/readings`);
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        setReadings(data);
+      }
+    } catch (err) {
+      console.error("Failed to load readings:", err);
+    }
+  }, []);
 
-  const handleUpdateReading = (updatedReading: InstrumentReading) => {
+  useEffect(() => {
+    loadReadings();
+    // Poll every 5 seconds for new readings from mobile
+    const interval = setInterval(loadReadings, 5000);
+    return () => clearInterval(interval);
+  }, [loadReadings]);
+
+  // Persist sheet URL
+  useEffect(() => {
+    localStorage.setItem('dc_sheet_url', googleSheetUrl);
+  }, [googleSheetUrl]);
+
+  const handleUpdateReading = async (updatedReading: InstrumentReading) => {
+    // Update on backend
+    try {
+      await fetch(`${BACKEND_URL}/api/readings/${updatedReading.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedReading),
+      });
+    } catch (e) {
+      console.error("Failed to update reading on backend:", e);
+    }
+    // Update local state
     setReadings(prev => prev.map(r => r.id === updatedReading.id ? updatedReading : r));
   };
 
-  const handleDeleteReading = (id: string) => {
+  const handleDeleteReading = async (id: string) => {
+    // Delete from backend
+    try {
+      await fetch(`${BACKEND_URL}/api/readings/${id}`, {
+        method: 'DELETE',
+      });
+    } catch (e) {
+      console.error("Failed to delete reading on backend:", e);
+    }
+    // Update local state
     setReadings(prev => prev.filter(r => r.id !== id));
   };
 
   const handleAddPanel = async (newPanel: Panel) => {
     try {
-      const res = await fetch('http://localhost:8000/api/panels', {
+      const res = await fetch(`${BACKEND_URL}/api/panels`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newPanel)
@@ -71,7 +102,7 @@ const App: React.FC = () => {
 
   const handleUpdatePanel = async (updatedPanel: Panel) => {
     try {
-      const res = await fetch(`http://localhost:8000/api/panels/${updatedPanel.id}`, {
+      const res = await fetch(`${BACKEND_URL}/api/panels/${updatedPanel.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updatedPanel)
@@ -86,7 +117,7 @@ const App: React.FC = () => {
   const handleDeletePanel = async (id: string) => {
     if (confirm('Are you sure?')) {
       try {
-        const res = await fetch(`http://localhost:8000/api/panels/${id}`, {
+        const res = await fetch(`${BACKEND_URL}/api/panels/${id}`, {
           method: 'DELETE'
         });
         const updatedPanels = await res.json();

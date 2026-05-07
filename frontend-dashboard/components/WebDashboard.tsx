@@ -445,10 +445,10 @@ const WebDashboard: React.FC<Props> = ({
               onChange={(e) => setReportShift(e.target.value as Shift | 'All')}
               className="px-4 py-2 border border-gray-300 rounded-lg text-sm min-w-[150px] focus:ring-2 focus:ring-blue-500 outline-none"
             >
-              <option value="All">All Shifts</option>
-              <option value="Morning">Morning</option>
-              <option value="Afternoon">Afternoon</option>
-              <option value="Night">Night</option>
+              <option value="All">Semua Shift</option>
+              <option value="1">Shift 1</option>
+              <option value="2">Shift 2</option>
+              <option value="3">Shift 3</option>
             </select>
           </div>
           <div className="ml-auto flex gap-3">
@@ -492,11 +492,11 @@ const WebDashboard: React.FC<Props> = ({
                     <td className="px-6 py-4 font-medium text-gray-900">{r.panelName}</td>
                     <td className="px-6 py-4">{r.operatorName}</td>
                     <td className="px-6 py-4">
-                      <span className={`px-2 py-1 rounded-full text-xs font-medium ${r.shift === 'Morning' ? 'bg-orange-100 text-orange-700' :
-                        r.shift === 'Afternoon' ? 'bg-blue-100 text-blue-700' :
+                      <span className={`px-2 py-1 rounded-full text-xs font-medium ${r.shift === '1' ? 'bg-orange-100 text-orange-700' :
+                        r.shift === '2' ? 'bg-blue-100 text-blue-700' :
                           'bg-indigo-100 text-indigo-700'
                         }`}>
-                        {r.shift}
+                        Shift {r.shift}
                       </span>
                     </td>
                     <td className="px-6 py-4 text-right font-mono">{r.voltage?.toFixed(1) || '-'}</td>
