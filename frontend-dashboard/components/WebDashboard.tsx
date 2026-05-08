@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { InstrumentReading, Panel, ReadingStatus, Shift, PanelParameter } from '../types';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar
@@ -6,7 +6,7 @@ import {
 import {
   Activity, Download, Search, Thermometer, Zap, CheckSquare, Trash2, Plus, Edit2,
   LayoutDashboard, Settings, FileSpreadsheet, Filter, Printer, XCircle, RotateCcw,
-  Link, Save, Database, Server, Loader2, CheckCircle, AlertCircle, Clock
+  Link, Save, Database, Server, Loader2, CheckCircle, AlertCircle, Clock, Upload, Cpu
 } from 'lucide-react';
 
 interface Props {
@@ -52,6 +52,58 @@ const WebDashboard: React.FC<Props> = ({
   // Settings State (Local temp state for input)
   const [tempUrl, setTempUrl] = useState(googleSheetUrl);
   const [isSaved, setIsSaved] = useState(false);
+
+  // Model Upload State
+  const [modelUploadStatus, setModelUploadStatus] = useState<Record<string, string>>({});
+  const [customParamInput, setCustomParamInput] = useState('');
+  const yoloTextRef = useRef<HTMLInputElement>(null);
+  const yoloDeviceRef = useRef<HTMLInputElement>(null);
+  const tesseractRef = useRef<HTMLInputElement>(null);
+  const [ocrLoading, setOcrLoading] = useState(false);
+  const BACKEND_URL = 'http://localhost:8000';
+
+  // Open verification modal: fetch OCR results from backend first
+  const openVerification = async (reading: InstrumentReading) => {
+    setOcrLoading(true);
+    let enrichedReading = { ...reading };
+
+    try {
+      // Try to fetch OCR result using the ocrFilename or imageUrl
+      const filename = (reading as any).ocrFilename
+        || (reading.imageUrl?.includes('localhost') ? reading.imageUrl.split('/').pop() : null);
+
+      if (filename) {
+        const res = await fetch(`${BACKEND_URL}/api/reading/${filename}`);
+        const data = await res.json();
+
+        if (data && data.readings && !data.status) {
+          // Merge OCR readings into the editing copy
+          const panel = panels.find(p => p.id === reading.panelId);
+          const params = panel?.parameters || [];
+
+          for (const param of params) {
+            if (data.readings[param] !== undefined && enrichedReading[param] === undefined) {
+              enrichedReading[param] = data.readings[param];
+            }
+          }
+
+          // Store labeled_pairs and rows_debug for display
+          if (data.labeled_pairs) {
+            (enrichedReading as any).labeled_pairs = data.labeled_pairs;
+          }
+          if (data.rows_debug) {
+            (enrichedReading as any).rows_debug = data.rows_debug;
+          }
+
+        }
+      }
+    } catch (e) {
+      console.warn('Could not fetch OCR results:', e);
+    }
+
+    setOcrLoading(false);
+    setEditingReading(enrichedReading);
+  };
 
   // Filtered Data
   const verifiedReadings = readings.filter(r => r.status === ReadingStatus.VERIFIED);
@@ -222,6 +274,7 @@ const WebDashboard: React.FC<Props> = ({
       type: 'Digital',
       parameters: ['voltage', 'current', 'power', 'temperature', 'humidity'] // Default check all
     });
+    setCustomParamInput('');
     setIsPanelModalOpen(true);
   };
 
@@ -229,6 +282,20 @@ const WebDashboard: React.FC<Props> = ({
     onUpdateGoogleSheetUrl(tempUrl);
     setIsSaved(true);
     setTimeout(() => setIsSaved(false), 2000);
+  };
+
+  const handleModelUpload = async (endpoint: string, file: File, key: string) => {
+    setModelUploadStatus(prev => ({ ...prev, [key]: 'uploading' }));
+    const form = new FormData();
+    form.append('file', file);
+    try {
+      const res = await fetch(`http://localhost:8000${endpoint}`, { method: 'POST', body: form });
+      const data = await res.json();
+      setModelUploadStatus(prev => ({ ...prev, [key]: data.status === 'success' ? 'success' : 'error' }));
+    } catch (e) {
+      setModelUploadStatus(prev => ({ ...prev, [key]: 'error' }));
+    }
+    setTimeout(() => setModelUploadStatus(prev => ({ ...prev, [key]: '' })), 3000);
   };
 
   // --- Render Functions ---
@@ -306,35 +373,58 @@ const WebDashboard: React.FC<Props> = ({
                 </div>
                 {/* OCR Status Badge */}
                 <div>
-                  {(reading.voltage || reading.current || reading.temperature || reading.humidity || reading.power) ? (
+                  {reading.ocr_status === 'COMPLETED' ? (
                     <span className="px-2 py-1 bg-green-100 text-green-700 text-xs font-bold rounded-full flex items-center gap-1">
                       <CheckCircle size={12} />
-                      OCR Done
+                      Completed
+                    </span>
+                  ) : reading.ocr_status === 'FAILED' ? (
+                    <span className="px-2 py-1 bg-red-100 text-red-700 text-xs font-bold rounded-full flex items-center gap-1">
+                      <AlertCircle size={12} />
+                      Failed
+                    </span>
+                  ) : reading.ocr_status === 'PROCESSING' ? (
+                    <span className="px-2 py-1 bg-blue-100 text-blue-700 text-xs font-bold rounded-full flex items-center gap-1 animate-pulse">
+                      <Loader2 size={12} className="animate-spin" />
+                      Processing
                     </span>
                   ) : (
-                    <span className="px-2 py-1 bg-yellow-100 text-yellow-700 text-xs font-bold rounded-full flex items-center gap-1 animate-pulse">
+                    <span className="px-2 py-1 bg-gray-100 text-gray-500 text-xs font-bold rounded-full flex items-center gap-1">
                       <Clock size={12} />
-                      Processing
+                      Queued
                     </span>
                   )}
                 </div>
               </div>
 
-              {/* Compact AI Data Preview */}
-              <div className="grid grid-cols-2 gap-2 text-sm mb-4 bg-gray-50 p-3 rounded-lg border border-gray-100">
-                <div><span className="text-gray-400 text-xs">Volt:</span> {reading.voltage || '-'} V</div>
-                <div><span className="text-gray-400 text-xs">Amp:</span> {reading.current || '-'} A</div>
-                <div><span className="text-gray-400 text-xs">Temp:</span> {reading.temperature || '-'} °C</div>
-                <div><span className="text-gray-400 text-xs">Hum:</span> {reading.humidity || '-'} %</div>
-                <div className="col-span-2"><span className="text-gray-400 text-xs">Pwr:</span> {reading.power || '-'} kW</div>
-              </div>
+              {/* Dynamic param preview */}
+              {(() => {
+                const panel = panels.find(p => p.id === reading.panelId);
+                const params = panel?.parameters || ['voltage', 'current', 'power'];
+                return (
+                  <div className="grid grid-cols-2 gap-2 text-sm mb-4 bg-gray-50 p-3 rounded-lg border border-gray-100">
+                    {params.slice(0, 5).map(p => (
+                      <div key={p} className="truncate">
+                        <span className="text-gray-400 text-xs">{p}:</span> {reading[p] ?? '-'}
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
 
               <button
-                onClick={() => setEditingReading(reading)}
-                className="w-full bg-blue-600 text-white py-2 rounded-lg font-medium hover:bg-blue-700 transition-colors"
+                onClick={() => openVerification(reading)}
+                className="w-full py-3 bg-blue-600 text-white rounded-lg font-bold shadow-sm hover:bg-blue-700 transition-all flex items-center justify-center gap-2"
               >
-                Review & Verify
+                {reading.ocr_status === 'COMPLETED' ? (
+                  <><CheckCircle size={18} /> Review & Verify</>
+                ) : reading.ocr_status === 'PROCESSING' || reading.ocr_status === 'PENDING' ? (
+                  <><Loader2 size={18} className="animate-spin" /> Review & Verify (OCR In Progress)</>
+                ) : (
+                  <><Activity size={18} /> Review & Verify</>
+                )}
               </button>
+
             </div>
           </div>
         ))}
@@ -426,6 +516,20 @@ const WebDashboard: React.FC<Props> = ({
       return matchDate && matchShift;
     });
 
+    const usedParamsSet = new Set<string>();
+    // Prioritize order from AVAILABLE_PARAMS
+    AVAILABLE_PARAMS.forEach(ap => {
+      if (reportData.some(r => r.panelId && panels.find(p => p.id === r.panelId)?.parameters?.includes(ap.id))) {
+        usedParamsSet.add(ap.id);
+      }
+    });
+    // Add others
+    reportData.forEach(r => {
+      const panel = panels.find(p => p.id === r.panelId);
+      panel?.parameters?.forEach(p => usedParamsSet.add(p));
+    });
+    const usedParams = Array.from(usedParamsSet);
+
     return (
       <div className="space-y-6">
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 flex flex-wrap items-end gap-6">
@@ -479,10 +583,11 @@ const WebDashboard: React.FC<Props> = ({
                   <th className="px-6 py-4">Panel</th>
                   <th className="px-6 py-4">Operator</th>
                   <th className="px-6 py-4">Shift</th>
-                  <th className="px-6 py-4 text-right">Volt (V)</th>
-                  <th className="px-6 py-4 text-right">Amp (A)</th>
-                  <th className="px-6 py-4 text-right">Temp (°C)</th>
-                  <th className="px-6 py-4 text-right">Hum (%)</th>
+                  {usedParams.map(paramId => {
+                    const available = AVAILABLE_PARAMS.find(ap => ap.id === paramId);
+                    const label = available ? available.label : (paramId.charAt(0).toUpperCase() + paramId.slice(1));
+                    return <th key={paramId} className="px-6 py-4 text-right">{label}</th>
+                  })}
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -499,10 +604,12 @@ const WebDashboard: React.FC<Props> = ({
                         Shift {r.shift}
                       </span>
                     </td>
-                    <td className="px-6 py-4 text-right font-mono">{r.voltage?.toFixed(1) || '-'}</td>
-                    <td className="px-6 py-4 text-right font-mono">{r.current?.toFixed(1) || '-'}</td>
-                    <td className="px-6 py-4 text-right font-mono">{r.temperature?.toFixed(1) || '-'}</td>
-                    <td className="px-6 py-4 text-right font-mono">{r.humidity?.toFixed(1) || '-'}</td>
+                    {usedParams.map(paramId => (
+                      <td key={paramId} className="px-6 py-4 text-right font-mono text-gray-900">
+                        {r[paramId] !== undefined && r[paramId] !== null ? 
+                          (typeof r[paramId] === 'number' ? r[paramId].toFixed(1) : r[paramId]) : '-'}
+                      </td>
+                    ))}
                   </tr>
                 )) : (
                   <tr>
@@ -613,6 +720,46 @@ const WebDashboard: React.FC<Props> = ({
         </div>
       </div>
 
+        {/* Model Management */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 mb-6">
+          <div className="flex items-start gap-4 mb-6">
+            <div className="p-3 bg-purple-100 text-purple-700 rounded-lg">
+              <Cpu size={24} />
+            </div>
+            <div>
+              <h3 className="text-lg font-bold text-gray-800">Model Management</h3>
+              <p className="text-sm text-gray-500">Upload model hasil pelatihan (YOLO & Tesseract) ke server.</p>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            {[
+              { label: 'YOLO Text/Digit Detection (.pt)', key: 'yolo-text', endpoint: '/api/models/upload/yolo-text', accept: '.pt', ref: yoloTextRef },
+              { label: 'YOLO Device Detection (.pt)', key: 'yolo-device', endpoint: '/api/models/upload/yolo-device', accept: '.pt', ref: yoloDeviceRef },
+              { label: 'Tesseract Custom Model (.traineddata)', key: 'tesseract', endpoint: '/api/models/upload/tesseract', accept: '.traineddata', ref: tesseractRef },
+            ].map(m => (
+              <div key={m.key} className="flex items-center justify-between p-4 border border-gray-200 rounded-xl bg-gray-50">
+                <div>
+                  <p className="font-medium text-gray-800 text-sm">{m.label}</p>
+                  {modelUploadStatus[m.key] === 'success' && <p className="text-xs text-green-600 mt-1 font-semibold">✓ Upload berhasil!</p>}
+                  {modelUploadStatus[m.key] === 'error' && <p className="text-xs text-red-600 mt-1 font-semibold">✗ Upload gagal.</p>}
+                  {modelUploadStatus[m.key] === 'uploading' && <p className="text-xs text-blue-600 mt-1 animate-pulse">Mengupload...</p>}
+                </div>
+                <div className="flex items-center gap-2">
+                  <input type="file" ref={m.ref} className="hidden" accept={m.accept}
+                    onChange={e => { const f = e.target.files?.[0]; if (f) handleModelUpload(m.endpoint, f, m.key); }} />
+                  <button
+                    onClick={() => m.ref.current?.click()}
+                    className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 text-sm font-medium transition-colors"
+                  >
+                    <Upload size={16} /> Upload
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
       <div className="bg-blue-50 border border-blue-100 rounded-xl p-6">
         <h4 className="font-semibold text-blue-900 mb-2">How to get the URL?</h4>
         <ol className="list-decimal list-inside text-sm text-blue-800 space-y-2">
@@ -665,7 +812,7 @@ const WebDashboard: React.FC<Props> = ({
 
         return (
           <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl h-[80vh] flex overflow-hidden">
+            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[85vh] flex overflow-hidden">
               {/* Left: Image */}
               <div className="w-1/2 bg-black flex items-center justify-center relative">
                 <img src={editingReading.imageUrl} className="max-w-full max-h-full object-contain" alt="evidence" />
@@ -673,17 +820,93 @@ const WebDashboard: React.FC<Props> = ({
                   {editingReading.shift} Shift
                 </div>
               </div>
-              {/* Right: Form */}
-              <div className="w-1/2 p-6 overflow-y-auto bg-gray-50">
-                <h3 className="text-xl font-bold text-gray-800 mb-1">Verify Reading</h3>
-                <p className="text-sm text-gray-500 mb-6">Review AI extracted data against the image.</p>
+              {/* Right: OCR Results + Editable Form */}
+              <div className="w-1/2 p-6 overflow-y-auto bg-gray-50 flex flex-col gap-5">
+                <div>
+                  <h3 className="text-xl font-bold text-gray-800 mb-1">Verify Reading</h3>
+                  <p className="text-sm text-gray-500">Review AI extracted data against the image.</p>
+                </div>
 
-                <div className="space-y-4">
-                  {showParams.includes('voltage') && <InputGroup label="Voltage (V)" value={editingReading.voltage} onChange={v => setEditingReading({ ...editingReading, voltage: parseFloat(v) })} />}
-                  {showParams.includes('current') && <InputGroup label="Current (A)" value={editingReading.current} onChange={v => setEditingReading({ ...editingReading, current: parseFloat(v) })} />}
-                  {showParams.includes('temperature') && <InputGroup label="Temperature (°C)" value={editingReading.temperature} onChange={v => setEditingReading({ ...editingReading, temperature: parseFloat(v) })} />}
-                  {showParams.includes('humidity') && <InputGroup label="Humidity (%)" value={editingReading.humidity} onChange={v => setEditingReading({ ...editingReading, humidity: parseFloat(v) })} />}
-                  {showParams.includes('power') && <InputGroup label="Power (kW)" value={editingReading.power} onChange={v => setEditingReading({ ...editingReading, power: parseFloat(v) })} />}
+                {/* === OCR Result Table === */}
+                {(() => {
+                  const ocrData = (editingReading as any);
+                  const rows = ocrData.rows_debug || [];
+                  const pairs = ocrData.labeled_pairs || ocrData.ocrLabeledPairs || [];
+                  
+                  // Ensure we check length properly
+                  const hasData = (Array.isArray(rows) && rows.length > 0) || (Array.isArray(pairs) && pairs.length > 0);
+
+                  return hasData ? (
+
+                    <div>
+                      <div className="flex items-center gap-2 mb-2">
+                        <Cpu size={14} className="text-blue-500" />
+                        <span className="text-xs font-semibold text-blue-600 uppercase tracking-wide">AI OCR Result (Processing Rows)</span>
+                      </div>
+                      <div className="rounded-xl overflow-hidden border border-blue-100 bg-blue-950 text-blue-100 font-mono">
+                        {/* Header */}
+                        <div className="grid grid-cols-3 text-xs font-bold uppercase px-4 py-2 bg-blue-900 text-blue-300 border-b border-blue-800">
+                          <span>Parameter</span>
+                          <span className="text-center">Value</span>
+                          <span className="text-right">Symbol</span>
+                        </div>
+                        {/* Render Rows from rows_debug if available */}
+                        {rows.length > 0 ? (
+                          rows.map((row: string[], i: number) => (
+                            <div
+                              key={i}
+                              className={`grid grid-cols-3 px-4 py-2 text-sm items-center ${
+                                i % 2 === 0 ? 'bg-blue-950' : 'bg-blue-900/40'
+                              }`}
+                            >
+                              <span className="text-blue-300 truncate">{row[0] || '—'}</span>
+                              <span className="text-center text-white font-bold tabular-nums">
+                                {row[1] || '—'}
+                              </span>
+                              <span className="text-right text-blue-400">{row[2] || '—'}</span>
+                            </div>
+                          ))
+                        ) : (
+                          /* Fallback to legacy pairs format */
+                          pairs.map((p: any, i: number) => (
+                            <div
+                              key={i}
+                              className={`grid grid-cols-3 px-4 py-2 text-sm items-center ${
+                                i % 2 === 0 ? 'bg-blue-950' : 'bg-blue-900/40'
+                              }`}
+                            >
+                              <span className="text-blue-300 truncate">{p.label}</span>
+                              <span className="text-center text-white font-bold tabular-nums">{p.value}</span>
+                              <span className="text-right text-blue-400">{p.unit || '—'}</span>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="rounded-xl border border-dashed border-gray-300 bg-gray-100 px-4 py-5 flex flex-col items-center gap-2 text-gray-400">
+                      <Cpu size={20} />
+                      <span className="text-xs text-center">OCR belum dijalankan atau tidak menemukan nilai.<br/>Upload foto baru untuk mendapatkan hasil OCR.</span>
+                    </div>
+                  );
+                })()}
+
+
+                {/* === Editable Form === */}
+                <div className="space-y-3">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Edit &amp; Correct Values</p>
+                  {showParams.map(paramId => {
+                    const available = AVAILABLE_PARAMS.find(ap => ap.id === paramId);
+                    const label = available ? available.label : (paramId.charAt(0).toUpperCase() + paramId.slice(1));
+                    return (
+                      <InputGroup
+                        key={paramId}
+                        label={label}
+                        value={editingReading[paramId]}
+                        onChange={(v: string) => setEditingReading({ ...editingReading, [paramId]: v === '' ? undefined : parseFloat(v) })}
+                      />
+                    );
+                  })}
 
                   <div>
                     <label className="block text-xs font-medium text-gray-500 mb-1">Notes</label>
@@ -696,13 +919,13 @@ const WebDashboard: React.FC<Props> = ({
                 </div>
 
                 {syncError && (
-                  <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg flex items-center gap-2 text-red-700 text-sm">
+                  <div className="p-3 bg-red-50 border border-red-200 rounded-lg flex items-center gap-2 text-red-700 text-sm">
                     <AlertCircle size={16} />
                     {syncError}
                   </div>
                 )}
 
-                <div className="mt-8 flex gap-3">
+                <div className="flex gap-3 pt-2">
                   <button onClick={() => setEditingReading(null)} disabled={isSyncing} className="px-4 py-3 border border-gray-300 rounded-lg text-gray-700 font-medium hover:bg-gray-100 disabled:opacity-50">Cancel</button>
                   <button onClick={() => handleReject(editingReading)} disabled={isSyncing} className="px-4 py-3 bg-red-50 border border-red-200 text-red-600 rounded-lg font-medium hover:bg-red-100 transition-colors disabled:opacity-50">Reject</button>
                   <button
@@ -711,15 +934,9 @@ const WebDashboard: React.FC<Props> = ({
                     className="flex-1 px-4 py-3 bg-green-600 text-white rounded-lg font-bold hover:bg-green-700 shadow-md transition-all disabled:opacity-70 flex items-center justify-center gap-2"
                   >
                     {isSyncing ? (
-                      <>
-                        <Loader2 className="animate-spin" size={20} />
-                        Syncing...
-                      </>
+                      <><Loader2 className="animate-spin" size={20} />Syncing...</>
                     ) : (
-                      <>
-                        <CheckCircle size={20} />
-                        Approve & Save
-                      </>
+                      <><CheckCircle size={20} />Approve &amp; Save</>
                     )}
                   </button>
                 </div>
@@ -753,8 +970,13 @@ const WebDashboard: React.FC<Props> = ({
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Monitored Parameters</label>
-                <div className="grid grid-cols-2 gap-2">
-                  {AVAILABLE_PARAMS.map(param => (
+                <div className="grid grid-cols-2 gap-2 max-h-40 overflow-y-auto p-1">
+                  {[
+                    ...AVAILABLE_PARAMS,
+                    ...(panelForm.parameters || [])
+                      .filter(p => !AVAILABLE_PARAMS.find(ap => ap.id === p))
+                      .map(p => ({ id: p, label: p }))
+                  ].map(param => (
                     <label key={param.id} className="flex items-center space-x-2 p-2 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50">
                       <input
                         type="checkbox"
@@ -768,9 +990,51 @@ const WebDashboard: React.FC<Props> = ({
                         }}
                         className="rounded text-blue-600 focus:ring-blue-500"
                       />
-                      <span className="text-sm text-gray-700">{param.label}</span>
+                      <span className="text-sm text-gray-700 truncate" title={param.label}>{param.label}</span>
                     </label>
                   ))}
+                </div>
+
+                <div className="mt-3">
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Add Custom Parameter</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="e.g. Frequency (Hz)"
+                      className="flex-1 p-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                      value={customParamInput}
+                      onChange={e => setCustomParamInput(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          const newParam = customParamInput.trim();
+                          if (newParam) {
+                            const currentParams = panelForm.parameters || [];
+                            if (!currentParams.includes(newParam)) {
+                              setPanelForm({ ...panelForm, parameters: [...currentParams, newParam] });
+                            }
+                            setCustomParamInput('');
+                          }
+                        }
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const newParam = customParamInput.trim();
+                        if (newParam) {
+                          const currentParams = panelForm.parameters || [];
+                          if (!currentParams.includes(newParam)) {
+                            setPanelForm({ ...panelForm, parameters: [...currentParams, newParam] });
+                          }
+                          setCustomParamInput('');
+                        }
+                      }}
+                      className="px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+                    >
+                      <Plus size={18} />
+                    </button>
+                  </div>
                 </div>
               </div>
 

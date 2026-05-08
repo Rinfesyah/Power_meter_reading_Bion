@@ -8,14 +8,19 @@ const BACKEND_URL = 'http://localhost:8000';
 export async function performBackendOCR(
   file: File,
   panelName: string,
+  panelId: string,
   shift: string,
-  operatorName: string
+  operatorName: string,
+  panelParams: string[] = []
 ): Promise<Record<string, any>> {
   const formData = new FormData();
   formData.append('file', file);
   formData.append('panel_name', panelName);
+  formData.append('panel_id', panelId);
   formData.append('shift', shift);
   formData.append('operator', operatorName);
+  formData.append('panel_params', JSON.stringify(panelParams)); // send param names to backend
+
 
   const response = await fetch(`${BACKEND_URL}/api/ocr`, {
     method: 'POST',
@@ -33,6 +38,44 @@ export async function performBackendOCR(
     ocrStatus: data.status || 'unknown',
     message: data.message || '',
   };
+}
+
+/**
+ * Polls the backend for OCR results until they are ready or timeout.
+ * Returns the OCR readings (voltage, current, etc.) once available.
+ */
+export async function pollForOCRResult(
+  filename: string,
+  maxAttempts: number = 15,
+  intervalMs: number = 2000
+): Promise<Record<string, any>> {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      const result = await getReadingResult(filename);
+      
+      // Check if OCR processing is done (has readings or raw_text)
+      if (result && result.readings && Object.keys(result.readings).length > 0) {
+        return result;
+      }
+      
+      // If we get raw_text but no readings, OCR ran but found nothing
+      if (result && result.raw_text && Array.isArray(result.raw_text)) {
+        return result;
+      }
+      
+      // Still processing, keep polling
+      if (result.status === 'processing_or_not_found') {
+        await new Promise(resolve => setTimeout(resolve, intervalMs));
+        continue;
+      }
+    } catch (e) {
+      // Network error, retry
+      await new Promise(resolve => setTimeout(resolve, intervalMs));
+    }
+  }
+  
+  // Timeout: return empty result
+  return { readings: {}, raw_text: [], timeout: true };
 }
 
 /**

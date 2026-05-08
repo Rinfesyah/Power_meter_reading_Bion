@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
-import { Camera, ChevronRight, Search, CheckCircle, Wifi, Battery, Server, ArrowLeft, Loader2, User, Clock, Briefcase, RotateCcw, UploadCloud, ImageIcon } from 'lucide-react';
+import { Camera, ChevronRight, Search, CheckCircle, Wifi, Battery, Server, ArrowLeft, Loader2, User, Clock, Briefcase, RotateCcw, UploadCloud, ImageIcon, ScanLine } from 'lucide-react';
 import { InstrumentReading, Panel, ReadingStatus, Shift } from '../types';
-import { performBackendOCR } from '../services/backendService';
+import { performBackendOCR, pollForOCRResult } from '../services/backendService';
 
 interface Props {
   panels: Panel[];
@@ -36,8 +36,10 @@ const MobileOperatorView: React.FC<Props> = ({ panels, readings, onSave }) => {
   const [image, setImage] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState<string>('Mengupload...');
   const [step, setStep] = useState<'login' | 'list' | 'camera' | 'success'>('login');
   const [searchTerm, setSearchTerm] = useState('');
+  const [lastOcrResult, setLastOcrResult] = useState<Record<string, any> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const filteredPanels = panels.filter(p =>
@@ -121,44 +123,113 @@ const MobileOperatorView: React.FC<Props> = ({ panels, readings, onSave }) => {
     }
   };
 
-  const processAndUpload = async (file: File, base64Preview: string) => {
-    setIsUploading(true);
+  /**
+   * Maps standard OCR output keys (voltage, current, etc.) to the panel's
+   * actual parameter names (e.g. "Vavg (V)", "Iavg (A)", "Ptot (kW)").
+   * This ensures OCR results populate the correct fields in the dashboard.
+   */
+  const mapOcrToPanel = (
+    ocrReadings: Record<string, any>,
+    panelParams: string[] | undefined
+  ): Record<string, any> => {
+    if (!panelParams || panelParams.length === 0 || Object.keys(ocrReadings).length === 0) {
+      return ocrReadings; // No mapping needed
+    }
 
-    try {
-      let ocrResult = {};
+    // Standard OCR key → keywords that match panel parameter names
+    const keywordMap: Record<string, string[]> = {
+      voltage: ['voltage', 'volt', 'vavg', 'v avg', 'vln', 'vll', 'tegangan'],
+      current: ['current', 'amp', 'iavg', 'i avg', 'arus'],
+      power: ['power', 'ptot', 'p tot', 'pwr', 'watt', 'daya'],
+      energy: ['energy', 'e del', 'edel', 'kwh', 'mwh', 'energi'],
+      temperature: ['temperature', 'temp', 'suhu', 'celsius'],
+      humidity: ['humidity', 'hum', 'kelembaban', 'rh'],
+      frequency: ['frequency', 'freq', 'hz', 'frekuensi'],
+      power_factor: ['power_factor', 'pf', 'cos', 'cosphi'],
+    };
 
-      // Try OCR from Python Backend
-      try {
-        ocrResult = await performBackendOCR(
-          file,
-          selectedPanel!.name,
-          session?.shift || '1',
-          session?.name || 'Unknown'
-        );
-      } catch (ocrError) {
-        console.warn("OCR Service failed, proceeding with manual upload", ocrError);
+    const mapped: Record<string, any> = {};
+    const usedOcrKeys = new Set<string>();
+
+    for (const param of panelParams) {
+      const pl = param.toLowerCase();
+
+      // Direct match: param name IS a standard key
+      if (ocrReadings[param] !== undefined) {
+        mapped[param] = ocrReadings[param];
+        usedOcrKeys.add(param);
+        continue;
       }
 
+      // Fuzzy match: check if param name contains any keyword for a standard key
+      for (const [ocrKey, keywords] of Object.entries(keywordMap)) {
+        if (usedOcrKeys.has(ocrKey) || ocrReadings[ocrKey] === undefined) continue;
+        if (keywords.some(kw => pl.includes(kw))) {
+          mapped[param] = ocrReadings[ocrKey];
+          usedOcrKeys.add(ocrKey);
+          break;
+        }
+      }
+    }
+
+    // Also include any remaining standard keys that weren't mapped
+    for (const [k, v] of Object.entries(ocrReadings)) {
+      if (!usedOcrKeys.has(k)) {
+        mapped[k] = v;
+      }
+    }
+
+    return mapped;
+  };
+
+  const processAndUpload = async (file: File, base64Preview: string) => {
+    setIsUploading(true);
+    setUploadStatus('Mengunggah gambar ke server...');
+
+    try {
+      let finalImageUrl = base64Preview;
+      let uploadFilename = '';
+
+      // Upload to backend — OCR runs in background, operator doesn't wait
+      try {
+        const uploadResult = await performBackendOCR(
+          file,
+          selectedPanel!.name,
+          selectedPanel!.id,
+          session?.shift || '1',
+          session?.name || 'Unknown',
+          selectedPanel?.parameters || []
+        );
+
+        finalImageUrl = uploadResult.imageUrl || base64Preview;
+        uploadFilename = uploadResult.filename || '';
+      } catch (uploadError) {
+        console.warn('Backend upload failed, saving with local image:', uploadError);
+      }
+
+      // Save reading immediately — OCR results will be fetched by dashboard later
       const newReading: InstrumentReading = {
-        ...ocrResult,
         id: Date.now().toString(),
         timestamp: Date.now(),
-        imageUrl: (ocrResult as any).imageUrl || base64Preview,
+        imageUrl: finalImageUrl,
         panelId: selectedPanel!.id,
         panelName: selectedPanel!.name,
         operatorName: session?.name || 'Unknown',
         shift: session?.shift || '1',
         hour: session?.hour || '',
+        ocrFilename: uploadFilename, // dashboard uses this to fetch OCR results
         status: ReadingStatus.PENDING,
+        notes: '',
       };
 
       onSave(newReading);
       setStep('success');
     } catch (e) {
-      console.error("Critical Upload Error:", e);
-      alert("Gagal mengupload data. Silakan coba lagi.");
+      console.error('Critical Upload Error:', e);
+      alert('Gagal mengupload data. Silakan coba lagi.');
     } finally {
       setIsUploading(false);
+      setUploadStatus('Mengupload...');
     }
   };
 
@@ -369,10 +440,18 @@ const MobileOperatorView: React.FC<Props> = ({ panels, readings, onSave }) => {
           <div className="flex flex-col h-full justify-center">
 
             {isUploading ? (
-              <div className="flex flex-col items-center justify-center animate-pulse">
-                <Loader2 className="w-16 h-16 text-blue-600 animate-spin mb-4" />
-                <h3 className="text-xl font-bold text-gray-800">Mengupload...</h3>
-                <p className="text-sm text-gray-500">Menyimpan ke server</p>
+              <div className="flex flex-col items-center justify-center gap-4 p-6">
+                <div className="relative">
+                  <div className="w-20 h-20 rounded-full bg-blue-50 flex items-center justify-center">
+                    <ScanLine className="w-10 h-10 text-blue-600 animate-pulse" />
+                  </div>
+                  <Loader2 className="w-6 h-6 text-blue-400 animate-spin absolute -bottom-1 -right-1" />
+                </div>
+                <div className="text-center">
+                  <h3 className="text-lg font-bold text-gray-800">Memproses...</h3>
+                  <p className="text-sm text-blue-600 font-medium mt-1 animate-pulse">{uploadStatus}</p>
+                  <p className="text-xs text-gray-400 mt-2">Pipeline: YOLO → Preprocessing → OCR</p>
+                </div>
               </div>
             ) : image ? (
               // --- Preview Mode (new photo OR existing photo) ---

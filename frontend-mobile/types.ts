@@ -11,7 +11,7 @@ export enum ReadingStatus {
 
 export type Shift = '1' | '2' | '3';
 
-export type PanelParameter = 'voltage' | 'current' | 'temperature' | 'humidity' | 'power';
+export type PanelParameter = string;
 
 export interface Panel {
   id: string;
@@ -40,6 +40,7 @@ export interface InstrumentReading {
 
   status: ReadingStatus;
   notes?: string;
+  [key: string]: any; // Allow custom metric fields
 }
 
 export interface OCRResult {
