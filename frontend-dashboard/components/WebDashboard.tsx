@@ -77,6 +77,9 @@ const WebDashboard: React.FC<Props> = ({
         const data = await res.json();
 
         if (data && data.readings && !data.status) {
+          // Store original OCR readings separately
+          enrichedReading.ocrReadings = data.readings;
+
           // Merge OCR readings into the editing copy
           const panel = panels.find(p => p.id === reading.panelId);
           const params = panel?.parameters || [];

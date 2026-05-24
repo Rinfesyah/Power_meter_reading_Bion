@@ -82,6 +82,7 @@ def update_reading_status_by_filename(filename: str, ocr_status: str, ocr_result
             if r.get('ocrFilename') == filename:
                 r['ocr_status'] = ocr_status
                 if ocr_results and ocr_results.get("readings"):
+                    r['ocrReadings'] = ocr_results["readings"]
                     for k, v in ocr_results["readings"].items():
                         r[k] = v
                 updated = True
