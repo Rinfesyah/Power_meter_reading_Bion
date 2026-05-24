@@ -13,9 +13,9 @@ except ImportError:
     YOLO_AVAILABLE = False
 
 # --- CONFIGURATION ---
-BASE_DB_PATH = "D:/Program/IDP/database"
-MEMORY_PATH = os.path.join(BASE_DB_PATH, "memory.json")
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DB_PATH = os.path.abspath(os.path.join(BACKEND_DIR, "..", "..", "database"))
+MEMORY_PATH = os.path.join(BASE_DB_PATH, "memory.json")
 MODELS_DIR = os.path.join(BACKEND_DIR, "models")
 TESSDATA_DIR = os.path.join(MODELS_DIR, "tessdata")
 YOLO_TEXT_MODEL = os.path.join(MODELS_DIR, "yolo_text_detect.pt")

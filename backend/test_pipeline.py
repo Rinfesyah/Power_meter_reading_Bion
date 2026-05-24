@@ -1,8 +1,9 @@
 """Test the fixed OCR pipeline with correct workflow."""
 from ocr_engine import process_image
 import json, glob
-
-images = glob.glob("D:/Program/IDP/database/foto/**/*.jpg", recursive=True)
+BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_FOTO_DIR = os.path.abspath(os.path.join(BACKEND_DIR, "..", "..", "database", "foto"))
+images = glob.glob(f"{DB_FOTO_DIR}/**/*.jpg", recursive=True)
 print(f"Found {len(images)} images\n")
 
 if images:

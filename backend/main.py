@@ -53,8 +53,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Base Paths (Using exact paths requested by user)
-BASE_DB_PATH = "D:/Program/IDP/database"
+# Base Paths (Using relative paths for portability)
+BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DB_PATH = os.path.abspath(os.path.join(BACKEND_DIR, "..", "..", "database"))
 PHOTO_BASE_PATH = os.path.join(BASE_DB_PATH, "foto")
 CSV_PATH = os.path.join(BASE_DB_PATH, "readings.csv")
 PANELS_DB_PATH = os.path.join(BASE_DB_PATH, "panels.json")
@@ -339,64 +340,6 @@ def get_reading_result(filename: str):
                     pass
     return {"status": "processing_or_not_found"}
 
-@app.post("/api/ocr")
-async def ocr_endpoint(
-    request: Request,
-    file: UploadFile = File(...),
-    panel_name: str = Form(...),
-    panel_id: str = Form(...),
-    shift: str = Form(...),
-    operator: str = Form("Unknown"),
-    panel_params: str = Form("")
-):
-    try:
-        # 1. Save Image
-        today_str = datetime.date.today().isoformat()
-        folder_name = f"{today_str} - Shift {shift}"
-        target_folder = os.path.join(PHOTO_BASE_PATH, folder_name)
-        os.makedirs(target_folder, exist_ok=True)
-
-        filename = f"{datetime.datetime.now().strftime('%H-%M-%S')}_{file.filename}"
-        file_location = os.path.join(target_folder, filename)
-        with open(file_location, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-
-        # 2. Register PENDING Reading in DB
-        reading_id = f"{int(time.time() * 1000)}"
-        from urllib.parse import quote
-        image_url = f"{request.base_url}images/{quote(folder_name)}/{filename}"
-        
-        params_list = json.loads(panel_params) if panel_params else None
-        
-        new_reading = {
-            "id": reading_id,
-            "timestamp": time.time() * 1000,
-            "imageUrl": image_url,
-            "panelId": panel_id,
-            "panelName": panel_name,
-            "operatorName": operator,
-            "shift": shift,
-            "ocr_status": "PENDING",
-            "ocrFilename": filename,
-            "status": "PENDING"
-        }
-        
-        readings = read_readings()
-        readings.insert(0, new_reading)
-        write_readings(readings)
-
-        # 3. Queue the OCR Task
-        ocr_queue.put({
-            "reading_id": reading_id,
-            "file_path": file_location,
-            "panel_name": panel_name,
-            "params_list": params_list
-        })
-
-        return {"status": "ok", "reading_id": reading_id, "image_url": image_url}
-
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

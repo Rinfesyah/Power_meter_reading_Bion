@@ -1,8 +1,9 @@
 import json
 import os
 
-BACKUP_FILE = "d:/Program/Workplace pertama/dc-ops-ocr/backend/power_meter_backup_full_1778169636776.json"
-MEMORY_PATH = "D:/Program/IDP/database/memory.json"
+BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+BACKUP_FILE = os.path.join(BACKEND_DIR, "power_meter_backup_full_1778169636776.json")
+MEMORY_PATH = os.path.abspath(os.path.join(BACKEND_DIR, "..", "..", "database", "memory.json"))
 
 def seed_smart_memory():
     with open(BACKUP_FILE, 'r') as f:

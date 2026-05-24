@@ -606,7 +606,7 @@ const WebDashboard: React.FC<Props> = ({
                     </td>
                     {usedParams.map(paramId => (
                       <td key={paramId} className="px-6 py-4 text-right font-mono text-gray-900">
-                        {r[paramId] !== undefined && r[paramId] !== null ? 
+                        {r[paramId] !== undefined && r[paramId] !== null ?
                           (typeof r[paramId] === 'number' ? r[paramId].toFixed(1) : r[paramId]) : '-'}
                       </td>
                     ))}
@@ -720,45 +720,45 @@ const WebDashboard: React.FC<Props> = ({
         </div>
       </div>
 
-        {/* Model Management */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 mb-6">
-          <div className="flex items-start gap-4 mb-6">
-            <div className="p-3 bg-purple-100 text-purple-700 rounded-lg">
-              <Cpu size={24} />
-            </div>
-            <div>
-              <h3 className="text-lg font-bold text-gray-800">Model Management</h3>
-              <p className="text-sm text-gray-500">Upload model hasil pelatihan (YOLO & Tesseract) ke server.</p>
-            </div>
+      {/* Model Management */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 mb-6">
+        <div className="flex items-start gap-4 mb-6">
+          <div className="p-3 bg-purple-100 text-purple-700 rounded-lg">
+            <Cpu size={24} />
           </div>
-
-          <div className="space-y-4">
-            {[
-              { label: 'YOLO Text/Digit Detection (.pt)', key: 'yolo-text', endpoint: '/api/models/upload/yolo-text', accept: '.pt', ref: yoloTextRef },
-              { label: 'YOLO Device Detection (.pt)', key: 'yolo-device', endpoint: '/api/models/upload/yolo-device', accept: '.pt', ref: yoloDeviceRef },
-              { label: 'Tesseract Custom Model (.traineddata)', key: 'tesseract', endpoint: '/api/models/upload/tesseract', accept: '.traineddata', ref: tesseractRef },
-            ].map(m => (
-              <div key={m.key} className="flex items-center justify-between p-4 border border-gray-200 rounded-xl bg-gray-50">
-                <div>
-                  <p className="font-medium text-gray-800 text-sm">{m.label}</p>
-                  {modelUploadStatus[m.key] === 'success' && <p className="text-xs text-green-600 mt-1 font-semibold">✓ Upload berhasil!</p>}
-                  {modelUploadStatus[m.key] === 'error' && <p className="text-xs text-red-600 mt-1 font-semibold">✗ Upload gagal.</p>}
-                  {modelUploadStatus[m.key] === 'uploading' && <p className="text-xs text-blue-600 mt-1 animate-pulse">Mengupload...</p>}
-                </div>
-                <div className="flex items-center gap-2">
-                  <input type="file" ref={m.ref} className="hidden" accept={m.accept}
-                    onChange={e => { const f = e.target.files?.[0]; if (f) handleModelUpload(m.endpoint, f, m.key); }} />
-                  <button
-                    onClick={() => m.ref.current?.click()}
-                    className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 text-sm font-medium transition-colors"
-                  >
-                    <Upload size={16} /> Upload
-                  </button>
-                </div>
-              </div>
-            ))}
+          <div>
+            <h3 className="text-lg font-bold text-gray-800">Model Management</h3>
+            <p className="text-sm text-gray-500">Upload model hasil pelatihan (YOLO & Tesseract) ke server.</p>
           </div>
         </div>
+
+        <div className="space-y-4">
+          {[
+            { label: 'YOLO Text/Digit Detection (.pt)', key: 'yolo-text', endpoint: '/api/models/upload/yolo-text', accept: '.pt', ref: yoloTextRef },
+            { label: 'YOLO Device Detection (.pt)', key: 'yolo-device', endpoint: '/api/models/upload/yolo-device', accept: '.pt', ref: yoloDeviceRef },
+            { label: 'Tesseract Custom Model (.traineddata)', key: 'tesseract', endpoint: '/api/models/upload/tesseract', accept: '.traineddata', ref: tesseractRef },
+          ].map(m => (
+            <div key={m.key} className="flex items-center justify-between p-4 border border-gray-200 rounded-xl bg-gray-50">
+              <div>
+                <p className="font-medium text-gray-800 text-sm">{m.label}</p>
+                {modelUploadStatus[m.key] === 'success' && <p className="text-xs text-green-600 mt-1 font-semibold">✓ Upload berhasil!</p>}
+                {modelUploadStatus[m.key] === 'error' && <p className="text-xs text-red-600 mt-1 font-semibold">✗ Upload gagal.</p>}
+                {modelUploadStatus[m.key] === 'uploading' && <p className="text-xs text-blue-600 mt-1 animate-pulse">Mengupload...</p>}
+              </div>
+              <div className="flex items-center gap-2">
+                <input type="file" ref={m.ref} className="hidden" accept={m.accept}
+                  onChange={e => { const f = e.target.files?.[0]; if (f) handleModelUpload(m.endpoint, f, m.key); }} />
+                <button
+                  onClick={() => m.ref.current?.click()}
+                  className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 text-sm font-medium transition-colors"
+                >
+                  <Upload size={16} /> Upload
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
 
       <div className="bg-blue-50 border border-blue-100 rounded-xl p-6">
         <h4 className="font-semibold text-blue-900 mb-2">How to get the URL?</h4>
@@ -778,7 +778,7 @@ const WebDashboard: React.FC<Props> = ({
       {/* Sidebar */}
       <aside className="w-64 bg-slate-900 text-white flex-shrink-0 hidden md:flex flex-col">
         <div className="p-6">
-          <h1 className="text-2xl font-bold tracking-tight">DC Monitor<span className="text-blue-500">.ai</span></h1>
+          <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
         </div>
         <nav className="flex-1 px-4 space-y-2">
           <NavItem active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} icon={<LayoutDashboard size={20} />} label="Overview" />
@@ -832,7 +832,7 @@ const WebDashboard: React.FC<Props> = ({
                   const ocrData = (editingReading as any);
                   const rows = ocrData.rows_debug || [];
                   const pairs = ocrData.labeled_pairs || ocrData.ocrLabeledPairs || [];
-                  
+
                   // Ensure we check length properly
                   const hasData = (Array.isArray(rows) && rows.length > 0) || (Array.isArray(pairs) && pairs.length > 0);
 
@@ -855,9 +855,8 @@ const WebDashboard: React.FC<Props> = ({
                           rows.map((row: string[], i: number) => (
                             <div
                               key={i}
-                              className={`grid grid-cols-3 px-4 py-2 text-sm items-center ${
-                                i % 2 === 0 ? 'bg-blue-950' : 'bg-blue-900/40'
-                              }`}
+                              className={`grid grid-cols-3 px-4 py-2 text-sm items-center ${i % 2 === 0 ? 'bg-blue-950' : 'bg-blue-900/40'
+                                }`}
                             >
                               <span className="text-blue-300 truncate">{row[0] || '—'}</span>
                               <span className="text-center text-white font-bold tabular-nums">
@@ -871,9 +870,8 @@ const WebDashboard: React.FC<Props> = ({
                           pairs.map((p: any, i: number) => (
                             <div
                               key={i}
-                              className={`grid grid-cols-3 px-4 py-2 text-sm items-center ${
-                                i % 2 === 0 ? 'bg-blue-950' : 'bg-blue-900/40'
-                              }`}
+                              className={`grid grid-cols-3 px-4 py-2 text-sm items-center ${i % 2 === 0 ? 'bg-blue-950' : 'bg-blue-900/40'
+                                }`}
                             >
                               <span className="text-blue-300 truncate">{p.label}</span>
                               <span className="text-center text-white font-bold tabular-nums">{p.value}</span>
@@ -886,7 +884,7 @@ const WebDashboard: React.FC<Props> = ({
                   ) : (
                     <div className="rounded-xl border border-dashed border-gray-300 bg-gray-100 px-4 py-5 flex flex-col items-center gap-2 text-gray-400">
                       <Cpu size={20} />
-                      <span className="text-xs text-center">OCR belum dijalankan atau tidak menemukan nilai.<br/>Upload foto baru untuk mendapatkan hasil OCR.</span>
+                      <span className="text-xs text-center">OCR belum dijalankan atau tidak menemukan nilai.<br />Upload foto baru untuk mendapatkan hasil OCR.</span>
                     </div>
                   );
                 })()}

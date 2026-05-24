@@ -1,7 +1,8 @@
 import json
 import os
 
-MEMORY_PATH = "D:/Program/IDP/database/memory.json"
+BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+MEMORY_PATH = os.path.abspath(os.path.join(BACKEND_DIR, "..", "..", "database", "memory.json"))
 
 def manual_seed():
     # Berdasarkan data backup yang Anda berikan, 
