@@ -1,12 +1,12 @@
 import React, { useState, useRef } from 'react';
-import { InstrumentReading, Panel, ReadingStatus, Shift, PanelParameter } from '../types';
+import { InstrumentReading, Panel, ReadingStatus, Shift, PanelParameterDef, VerifiedReading, normalizeParameter } from '../types';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar
 } from 'recharts';
 import {
   Activity, Download, Search, Thermometer, Zap, CheckSquare, Trash2, Plus, Edit2,
   LayoutDashboard, Settings, FileSpreadsheet, Filter, Printer, XCircle, RotateCcw,
-  Link, Save, Database, Server, Loader2, CheckCircle, AlertCircle, Clock, Upload, Cpu
+  Link, Save, Database, Server, Loader2, CheckCircle, AlertCircle, Clock, Upload, Cpu, X
 } from 'lucide-react';
 
 interface Props {
@@ -23,12 +23,16 @@ interface Props {
 
 type Tab = 'dashboard' | 'verification' | 'panels' | 'reports' | 'rejected' | 'settings';
 
-const AVAILABLE_PARAMS: { id: PanelParameter, label: string }[] = [
-  { id: 'voltage', label: 'Voltage (V)' },
-  { id: 'current', label: 'Current (A)' },
-  { id: 'power', label: 'Power (kW)' },
-  { id: 'temperature', label: 'Temperature (°C)' },
-  { id: 'humidity', label: 'Humidity (%)' },
+/** Preset parameters for quick-add */
+const PRESET_PARAMS: PanelParameterDef[] = [
+  { name: 'Vavg',         unit: 'V'   },
+  { name: 'Iavg',         unit: 'A'   },
+  { name: 'Ptot',         unit: 'kW'  },
+  { name: 'E Del',        unit: 'MWh' },
+  { name: 'Frequency',    unit: 'Hz'  },
+  { name: 'Power Factor', unit: ''    },
+  { name: 'Temperature',  unit: '°C'  },
+  { name: 'Humidity',     unit: '%'   },
 ];
 
 const WebDashboard: React.FC<Props> = ({
@@ -56,6 +60,7 @@ const WebDashboard: React.FC<Props> = ({
   // Model Upload State
   const [modelUploadStatus, setModelUploadStatus] = useState<Record<string, string>>({});
   const [customParamInput, setCustomParamInput] = useState('');
+  const [customUnitInput, setCustomUnitInput] = useState('');
   const yoloTextRef = useRef<HTMLInputElement>(null);
   const yoloDeviceRef = useRef<HTMLInputElement>(null);
   const tesseractRef = useRef<HTMLInputElement>(null);
@@ -65,10 +70,14 @@ const WebDashboard: React.FC<Props> = ({
   // Open verification modal: fetch OCR results from backend first
   const openVerification = async (reading: InstrumentReading) => {
     setOcrLoading(true);
-    let enrichedReading = { ...reading };
+    let enrichedReading: any = { ...reading };
+
+    // Resolve panel parameters (normalize old string format)
+    const panel = panels.find(p => p.id === reading.panelId);
+    const rawParams = panel?.parameters || [];
+    const paramDefs: PanelParameterDef[] = rawParams.map(normalizeParameter);
 
     try {
-      // Try to fetch OCR result using the ocrFilename or imageUrl
       const filename = (reading as any).ocrFilename
         || (reading.imageUrl?.includes('localhost') ? reading.imageUrl.split('/').pop() : null);
 
@@ -77,31 +86,32 @@ const WebDashboard: React.FC<Props> = ({
         const data = await res.json();
 
         if (data && data.readings && !data.status) {
-          // Store original OCR readings separately
           enrichedReading.ocrReadings = data.readings;
 
-          // Merge OCR readings into the editing copy
-          const panel = panels.find(p => p.id === reading.panelId);
-          const params = panel?.parameters || [];
+          // Use params_defs from OCR JSON if available (more accurate units)
+          const ocrParamDefs: PanelParameterDef[] = (data.params_defs || []).length > 0
+            ? data.params_defs.map(normalizeParameter)
+            : paramDefs;
 
-          for (const param of params) {
-            if (data.readings[param] !== undefined && enrichedReading[param] === undefined) {
-              enrichedReading[param] = data.readings[param];
-            }
-          }
+          // Build verifiedReadings pre-filled with OCR values
+          enrichedReading.verifiedReadings = ocrParamDefs.map((pd: PanelParameterDef) => ({
+            name: pd.name,
+            unit: pd.unit,
+            value: data.readings[pd.name] ?? null
+          })) as VerifiedReading[];
 
-          // Store labeled_pairs and rows_debug for display
-          if (data.labeled_pairs) {
-            (enrichedReading as any).labeled_pairs = data.labeled_pairs;
-          }
-          if (data.rows_debug) {
-            (enrichedReading as any).rows_debug = data.rows_debug;
-          }
-
+          if (data.labeled_pairs) enrichedReading.labeled_pairs = data.labeled_pairs;
+          if (data.rows_debug)    enrichedReading.rows_debug    = data.rows_debug;
+        } else {
+          // No OCR data — init empty verifiedReadings
+          enrichedReading.verifiedReadings = paramDefs.map(pd => ({ name: pd.name, unit: pd.unit, value: null }));
         }
+      } else {
+        enrichedReading.verifiedReadings = paramDefs.map(pd => ({ name: pd.name, unit: pd.unit, value: null }));
       }
     } catch (e) {
       console.warn('Could not fetch OCR results:', e);
+      enrichedReading.verifiedReadings = paramDefs.map(pd => ({ name: pd.name, unit: pd.unit, value: null }));
     }
 
     setOcrLoading(false);
@@ -133,25 +143,139 @@ const WebDashboard: React.FC<Props> = ({
   // --- Handlers ---
 
   const syncToGoogleSheet = async (reading: InstrumentReading, panelLocation?: string) => {
-    if (!googleSheetUrl) return true; // Skip if no URL configured
+    if (!googleSheetUrl) return true;
 
     try {
-      // Prepare payload enriched with location data for the "PAC" sheet requirement
-      const payload = {
-        ...reading,
-        location: panelLocation || ""
+      // Build structured payload with 6 columns per parameter:
+      // param_ocr, value_ocr, unit_ocr, param_verify, value_verify, unit_verify
+      const verifiedRows: VerifiedReading[] = (reading as any).verifiedReadings || [];
+      const ocrMap: Record<string, number | null> = (reading as any).ocrReadings || {};
+      const rowsDebug: string[][] = (reading as any).rows_debug || [];
+      const labeledPairs: any[] = (reading as any).labeled_pairs || (reading as any).ocrLabeledPairs || [];
+
+      // Name-based match function (fallback only)
+      const matchParamByName = (paramName: string, label: string): boolean => {
+        if (!label) return false;
+        const pn = paramName.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').trim();
+        const lb = label.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').trim();
+
+        if (lb.length < 2 && !['v', 'i', 'p'].includes(lb)) return false;
+
+        const synonyms: Record<string, string[]> = {
+          "vavg": ["v", "v ave", "volt", "voltage", "l.avg", "lavg", "v.avg", "ua.g", "ua g", "uag", "ligwg", "lvavg", "vavg"],
+          "iavg": ["i", "i ave", "amp", "ampere", "current", "1.avg", "iavg", "iawvg", "iawg", "ia v g"],
+          "ptot": ["p", "p tot", "pwr", "power", "kw", "ftot", "f tot", "ptot", "ptat"],
+          "e del": ["e", "del", "energy", "mwh", "edel", "e del"]
+        };
+
+        for (const [key, syns] of Object.entries(synonyms)) {
+          if (pn.includes(key)) {
+            if (lb === key || syns.includes(lb)) return true;
+          }
+        }
+
+        if (lb.includes(pn) || pn.includes(lb)) return true;
+
+        const pnWords = new Set(pn.split(' ').filter(w => w.length >= 2));
+        const lbWords = new Set(lb.split(' ').filter(w => w.length >= 2));
+        const intersection = new Set([...pnWords].filter(x => lbWords.has(x)));
+        if (intersection.size > 0) return true;
+
+        return false;
       };
 
-      const response = await fetch(googleSheetUrl, {
+      // Parse a numeric value from OCR text string
+      const parseOcrValue = (text: string): number | null => {
+        if (!text) return null;
+        const cleaned = String(text).replace(',', '.');
+        const m = cleaned.match(/(\d+\.?\d*)/);
+        if (m) {
+          const n = parseFloat(m[1]);
+          return isNaN(n) ? null : n;
+        }
+        return null;
+      };
+
+      const paramRows = verifiedRows.map((vr, idx) => {
+        let rawParam = vr.name;
+        let rawValue: number | null = ocrMap[vr.name] ?? null;
+        let rawUnit = vr.unit;
+
+        let foundRawRow: string[] | null = null;
+
+        // ── Strategy 1: Positional match ──────────────────────────────────────
+        // When count of OCR rows equals count of panel parameters, use direct
+        // index mapping. This is most reliable because the meter always displays
+        // params in the same order, even if the label text was misread
+        // (e.g. "Ua.g" instead of "Vavg", "Iawg" instead of "Iavg").
+        if (rowsDebug.length > 0 && rowsDebug.length === verifiedRows.length) {
+          foundRawRow = rowsDebug[idx] || null;
+        }
+
+        // ── Strategy 2: Name-based match (when positional not applicable) ─────
+        if (!foundRawRow) {
+          foundRawRow = rowsDebug.find(row =>
+            row && row.length > 0 && matchParamByName(vr.name, row[0])
+          ) || null;
+        }
+
+        // ── Strategy 3: labeled_pairs fallback ────────────────────────────────
+        if (!foundRawRow) {
+          const matchedPair = labeledPairs.find(pair =>
+            pair && pair.label && matchParamByName(vr.name, pair.label)
+          );
+          if (matchedPair) {
+            rawParam = matchedPair.label || vr.name;
+            rawUnit  = matchedPair.unit  || '';
+            if (rawValue === null && matchedPair.value != null) {
+              rawValue = parseOcrValue(String(matchedPair.value));
+            }
+          }
+        }
+
+        // Apply the found raw row
+        if (foundRawRow) {
+          rawParam = foundRawRow[0] || vr.name;
+          rawUnit  = foundRawRow[2] || '';
+          // If ocrMap has no value for this param, parse directly from the raw row text
+          if (rawValue === null && foundRawRow[1]) {
+            rawValue = parseOcrValue(foundRawRow[1]);
+          }
+        }
+
+        return {
+          param_ocr:    rawParam,
+          value_ocr:    rawValue,
+          unit_ocr:     rawUnit,
+          param_verify: vr.name,
+          value_verify: vr.value,
+          unit_verify:  vr.unit,
+        };
+      });
+
+      const payload = {
+        id:            reading.id,
+        panelName:     reading.panelName,
+        panelId:       reading.panelId,
+        operatorName:  reading.operatorName,
+        shift:         reading.shift,
+        hour:          reading.hour,
+        timestamp:     reading.timestamp,
+        location:      panelLocation || "",
+        status:        reading.status,
+        notes:         reading.notes,
+        paramRows,                           // structured [{param_ocr,value_ocr,...}]
+        ocrReadings:     ocrMap,              // legacy flat dict
+        verifiedReadings: verifiedRows,       // [{name,value,unit}]
+      };
+
+      await fetch(googleSheetUrl, {
         method: 'POST',
-        mode: 'no-cors', // Important for Google Apps Script Web App
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
 
-      // With no-cors, we can't check response.ok, so we assume success if no network error
       return true;
     } catch (error) {
       console.error("Sync Error:", error);
@@ -189,39 +313,29 @@ const WebDashboard: React.FC<Props> = ({
   const handleSaveEdit = async () => {
     if (!editingReading) return;
 
-    // Persist to local "database" (mock)
     onUpdateReading(editingReading);
 
     // --- SMART MEMORY TRIGGER ---
-    // 1. Fetch the raw JSON associated with this image to get 'raw_text'
-    // The image URL is like: http://localhost:8000/images/2024.../time_panel_file.jpg
-    // The backend saves JSON as ...file.jpg.json. 
-    // We need to ask backend for it.
-
     try {
       if (editingReading.imageUrl && editingReading.imageUrl.includes("localhost")) {
         const filename = editingReading.imageUrl.split('/').pop();
         if (filename) {
-          // Fetch OCR result to get raw text
-          // Removing extension from URL param logic if needed, but backend handles it
           const res = await fetch(`http://localhost:8000/api/reading/${filename}`);
           const data = await res.json();
 
           if (data.raw_text) {
-            // 2. Send Correction to Learning Endpoint
+            // Build readings dict from verifiedReadings for the learn endpoint
+            const vr: VerifiedReading[] = (editingReading as any).verifiedReadings || [];
+            const readingsDict: Record<string, number | null> = {};
+            vr.forEach(r => { readingsDict[r.name] = r.value; });
+
             await fetch('http://localhost:8000/api/learn', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 panel_name: editingReading.panelName,
-                readings: {
-                  voltage: editingReading.voltage,
-                  current: editingReading.current,
-                  power: editingReading.power,
-                  temperature: editingReading.temperature,
-                  humidity: editingReading.humidity
-                },
-                raw_text: data.raw_text
+                readings:   readingsDict,
+                raw_text:   data.raw_text
               })
             });
             console.log("Smart Memory Updated!");
@@ -256,11 +370,7 @@ const WebDashboard: React.FC<Props> = ({
   }
 
   const handlePanelSubmit = () => {
-    // Ensure parameters are saved
-    const params = panelForm.parameters && panelForm.parameters.length > 0
-      ? panelForm.parameters
-      : ['voltage', 'current', 'temperature', 'humidity', 'power']; // Default to all if none selected (fallback)
-
+    const params: PanelParameterDef[] = ((panelForm.parameters || []) as any[]).map(normalizeParameter);
     if (panelForm.id) {
       onUpdatePanel({ ...panelForm, parameters: params } as Panel);
     } else {
@@ -268,16 +378,21 @@ const WebDashboard: React.FC<Props> = ({
     }
     setIsPanelModalOpen(false);
     setPanelForm({});
+    setCustomParamInput('');
+    setCustomUnitInput('');
   };
 
   const openPanelModal = (panel?: Panel) => {
-    setPanelForm(panel || {
+    // Normalise existing parameters to new format
+    const existingParams = (panel?.parameters || []).map(normalizeParameter);
+    setPanelForm(panel ? { ...panel, parameters: existingParams } : {
       name: '',
       location: '',
       type: 'Digital',
-      parameters: ['voltage', 'current', 'power', 'temperature', 'humidity'] // Default check all
+      parameters: [] as any
     });
     setCustomParamInput('');
+    setCustomUnitInput('');
     setIsPanelModalOpen(true);
   };
 
@@ -404,13 +519,20 @@ const WebDashboard: React.FC<Props> = ({
               {(() => {
                 const panel = panels.find(p => p.id === reading.panelId);
                 const params = panel?.parameters || ['voltage', 'current', 'power'];
+                const paramDefs = params.map(normalizeParameter);
                 return (
                   <div className="grid grid-cols-2 gap-2 text-sm mb-4 bg-gray-50 p-3 rounded-lg border border-gray-100">
-                    {params.slice(0, 5).map(p => (
-                      <div key={p} className="truncate">
-                        <span className="text-gray-400 text-xs">{p}:</span> {reading[p] ?? '-'}
-                      </div>
-                    ))}
+                    {paramDefs.slice(0, 5).map((pd, idx) => {
+                      const vrVal = (reading.verifiedReadings || []).find(vr => vr.name === pd.name)?.value;
+                      const ocrVal = reading.ocrReadings?.[pd.name];
+                      const flatVal = reading[pd.name] ?? reading[pd.name.toLowerCase()];
+                      const value = vrVal ?? ocrVal ?? flatVal ?? '-';
+                      return (
+                        <div key={idx} className="truncate">
+                          <span className="text-gray-400 text-xs">{pd.name}:</span> {value} {pd.unit && <span className="text-gray-400 text-[10px]">({pd.unit})</span>}
+                        </div>
+                      );
+                    })}
                   </div>
                 );
               })()}
@@ -520,16 +642,16 @@ const WebDashboard: React.FC<Props> = ({
     });
 
     const usedParamsSet = new Set<string>();
-    // Prioritize order from AVAILABLE_PARAMS
-    AVAILABLE_PARAMS.forEach(ap => {
-      if (reportData.some(r => r.panelId && panels.find(p => p.id === r.panelId)?.parameters?.includes(ap.id))) {
-        usedParamsSet.add(ap.id);
-      }
-    });
-    // Add others
+    // Collect all parameter names used in report data
     reportData.forEach(r => {
       const panel = panels.find(p => p.id === r.panelId);
-      panel?.parameters?.forEach(p => usedParamsSet.add(p));
+      (panel?.parameters || []).forEach((p: any) => {
+        usedParamsSet.add(normalizeParameter(p).name);
+      });
+      // Also include verifiedReadings keys
+      ((r as any).verifiedReadings || []).forEach((vr: any) => {
+        if (vr.name) usedParamsSet.add(vr.name);
+      });
     });
     const usedParams = Array.from(usedParamsSet);
 
@@ -587,9 +709,7 @@ const WebDashboard: React.FC<Props> = ({
                   <th className="px-6 py-4">Operator</th>
                   <th className="px-6 py-4">Shift</th>
                   {usedParams.map(paramId => {
-                    const available = AVAILABLE_PARAMS.find(ap => ap.id === paramId);
-                    const label = available ? available.label : (paramId.charAt(0).toUpperCase() + paramId.slice(1));
-                    return <th key={paramId} className="px-6 py-4 text-right">{label}</th>
+                    return <th key={paramId} className="px-6 py-4 text-right">{paramId}</th>
                   })}
                 </tr>
               </thead>
@@ -607,12 +727,17 @@ const WebDashboard: React.FC<Props> = ({
                         Shift {r.shift}
                       </span>
                     </td>
-                    {usedParams.map(paramId => (
-                      <td key={paramId} className="px-6 py-4 text-right font-mono text-gray-900">
-                        {r[paramId] !== undefined && r[paramId] !== null ?
-                          (typeof r[paramId] === 'number' ? r[paramId].toFixed(1) : r[paramId]) : '-'}
-                      </td>
-                    ))}
+                    {usedParams.map(paramId => {
+                      const vrVal = (r.verifiedReadings || []).find((vr: any) => vr.name === paramId)?.value;
+                      const value = vrVal !== undefined && vrVal !== null
+                        ? vrVal
+                        : (r[paramId] !== undefined && r[paramId] !== null ? r[paramId] : null);
+                      return (
+                        <td key={paramId} className="px-6 py-4 text-right font-mono text-gray-900">
+                          {value !== null ? (typeof value === 'number' ? value.toFixed(1) : value) : '-'}
+                        </td>
+                      );
+                    })}
                   </tr>
                 )) : (
                   <tr>
@@ -657,8 +782,18 @@ const WebDashboard: React.FC<Props> = ({
               <td className="px-6 py-4 font-medium text-gray-900">{panel.name}</td>
               <td className="px-6 py-4">{panel.location}</td>
               <td className="px-6 py-4">{panel.type}</td>
-              <td className="px-6 py-4 text-xs text-gray-500">
-                {panel.parameters?.length ? panel.parameters.map(p => p.slice(0, 3)).join(', ') : 'All'}
+              <td className="px-6 py-4">
+                <div className="flex flex-wrap gap-1">
+                  {(panel.parameters || []).map((p: any, i: number) => {
+                    const pd = normalizeParameter(p);
+                    return (
+                      <span key={i} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 bg-blue-50 text-blue-700 text-xs rounded border border-blue-100 font-mono">
+                        {pd.name}{pd.unit ? <span className="text-blue-400">({pd.unit})</span> : ''}
+                      </span>
+                    );
+                  })}
+                  {(!panel.parameters || panel.parameters.length === 0) && <span className="text-gray-400 text-xs">—</span>}
+                </div>
               </td>
               <td className="px-6 py-4 text-right">
                 <button onClick={() => openPanelModal(panel)} className="text-blue-600 hover:text-blue-800 mr-3">
@@ -809,10 +944,6 @@ const WebDashboard: React.FC<Props> = ({
 
       {/* Verification Modal */}
       {editingReading && (() => {
-        // Determine which fields to show based on the panel config
-        const panel = panels.find(p => p.id === editingReading.panelId);
-        const showParams = panel?.parameters || ['voltage', 'current', 'temperature', 'humidity', 'power'];
-
         return (
           <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[85vh] flex overflow-hidden">
@@ -896,18 +1027,47 @@ const WebDashboard: React.FC<Props> = ({
                 {/* === Editable Form === */}
                 <div className="space-y-3">
                   <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Edit &amp; Correct Values</p>
-                  {showParams.map(paramId => {
-                    const available = AVAILABLE_PARAMS.find(ap => ap.id === paramId);
-                    const label = available ? available.label : (paramId.charAt(0).toUpperCase() + paramId.slice(1));
-                    return (
-                      <InputGroup
-                        key={paramId}
-                        label={label}
-                        value={editingReading[paramId]}
-                        onChange={(v: string) => setEditingReading({ ...editingReading, [paramId]: v === '' ? undefined : parseFloat(v) })}
+
+                  {/* Column headers */}
+                  <div className="grid grid-cols-[1fr_110px_72px] gap-2 px-1">
+                    <span className="text-xs text-gray-400 font-medium">Parameter</span>
+                    <span className="text-xs text-gray-400 font-medium">Value</span>
+                    <span className="text-xs text-gray-400 font-medium">Satuan</span>
+                  </div>
+
+                  {/* Verified reading rows */}
+                  {((editingReading as any).verifiedReadings || []).map((paramVal: VerifiedReading, idx: number) => (
+                    <div key={idx} className="grid grid-cols-[1fr_110px_72px] gap-2 items-center">
+                      <span className="text-sm font-semibold text-gray-700 truncate" title={paramVal.name}>{paramVal.name}</span>
+                      <input
+                        type="number"
+                        step="any"
+                        value={paramVal.value ?? ''}
+                        placeholder="—"
+                        onChange={(e) => {
+                          const updated = [...((editingReading as any).verifiedReadings as VerifiedReading[])];
+                          updated[idx] = { ...updated[idx], value: e.target.value === '' ? null : parseFloat(e.target.value) };
+                          setEditingReading({ ...editingReading, verifiedReadings: updated } as any);
+                        }}
+                        className="w-full p-2 border border-gray-300 rounded-lg text-sm font-mono font-bold text-gray-800 focus:ring-2 focus:ring-blue-500 outline-none"
                       />
-                    );
-                  })}
+                      <input
+                        type="text"
+                        value={paramVal.unit || ''}
+                        placeholder="unit"
+                        onChange={(e) => {
+                          const updated = [...((editingReading as any).verifiedReadings as VerifiedReading[])];
+                          updated[idx] = { ...updated[idx], unit: e.target.value };
+                          setEditingReading({ ...editingReading, verifiedReadings: updated } as any);
+                        }}
+                        className="w-full p-2 border border-gray-300 rounded-lg text-sm text-gray-600 focus:ring-2 focus:ring-blue-500 outline-none"
+                      />
+                    </div>
+                  ))}
+
+                  {((editingReading as any).verifiedReadings || []).length === 0 && (
+                    <p className="text-xs text-gray-400 text-center py-2">Tidak ada parameter yang terdaftar untuk panel ini.</p>
+                  )}
 
                   <div>
                     <label className="block text-xs font-medium text-gray-500 mb-1">Notes</label>
@@ -971,67 +1131,111 @@ const WebDashboard: React.FC<Props> = ({
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Monitored Parameters</label>
-                <div className="grid grid-cols-2 gap-2 max-h-40 overflow-y-auto p-1">
-                  {[
-                    ...AVAILABLE_PARAMS,
-                    ...(panelForm.parameters || [])
-                      .filter(p => !AVAILABLE_PARAMS.find(ap => ap.id === p))
-                      .map(p => ({ id: p, label: p }))
-                  ].map(param => (
-                    <label key={param.id} className="flex items-center space-x-2 p-2 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50">
-                      <input
-                        type="checkbox"
-                        checked={panelForm.parameters ? panelForm.parameters.includes(param.id) : true}
-                        onChange={(e) => {
-                          const current = panelForm.parameters || AVAILABLE_PARAMS.map(p => p.id);
-                          const updated = e.target.checked
-                            ? [...current, param.id]
-                            : current.filter(p => p !== param.id);
-                          setPanelForm({ ...panelForm, parameters: updated });
-                        }}
-                        className="rounded text-blue-600 focus:ring-blue-500"
-                      />
-                      <span className="text-sm text-gray-700 truncate" title={param.label}>{param.label}</span>
-                    </label>
-                  ))}
+
+                {/* Column headers for param list */}
+                <div className="grid grid-cols-[1fr_80px_32px] gap-2 px-2 mb-1">
+                  <span className="text-xs text-gray-400">Nama Parameter</span>
+                  <span className="text-xs text-gray-400">Satuan</span>
+                  <span />
                 </div>
 
-                <div className="mt-3">
-                  <label className="block text-xs font-medium text-gray-500 mb-1">Add Custom Parameter</label>
+                {/* Current parameters list */}
+                <div className="space-y-1.5 max-h-44 overflow-y-auto mb-3">
+                  {((panelForm.parameters || []) as any[]).map(normalizeParameter).map((param: PanelParameterDef, idx: number) => (
+                    <div key={idx} className="grid grid-cols-[1fr_80px_32px] gap-2 items-center bg-blue-50 border border-blue-100 rounded-lg px-2 py-1.5">
+                      <span className="text-sm font-medium text-gray-800 truncate">{param.name}</span>
+                      <span className="text-xs text-gray-500 font-mono">{param.unit || '—'}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const updated = ((panelForm.parameters || []) as any[]).map(normalizeParameter)
+                            .filter((_: PanelParameterDef, i: number) => i !== idx);
+                          setPanelForm({ ...panelForm, parameters: updated });
+                        }}
+                        className="p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+                        title="Hapus parameter"
+                      >
+                        <X size={13} />
+                      </button>
+                    </div>
+                  ))}
+                  {(panelForm.parameters || []).length === 0 && (
+                    <p className="text-xs text-gray-400 text-center py-3 border border-dashed border-gray-200 rounded-lg">
+                      Belum ada parameter. Tambahkan di bawah.
+                    </p>
+                  )}
+                </div>
+
+                {/* Preset quick-add */}
+                <div className="mb-3">
+                  <p className="text-xs text-gray-500 mb-1.5 font-medium">Preset Cepat:</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {PRESET_PARAMS
+                      .filter(p => !((panelForm.parameters || []) as any[]).map(normalizeParameter)
+                        .find((ep: PanelParameterDef) => ep.name === p.name))
+                      .map(p => (
+                        <button
+                          key={p.name}
+                          type="button"
+                          onClick={() => {
+                            const current = ((panelForm.parameters || []) as any[]).map(normalizeParameter);
+                            setPanelForm({ ...panelForm, parameters: [...current, p] });
+                          }}
+                          className="text-xs px-2.5 py-1 bg-white text-blue-700 border border-blue-300 rounded-full hover:bg-blue-50 transition-colors"
+                        >
+                          + {p.name}{p.unit ? ` (${p.unit})` : ''}
+                        </button>
+                      ))
+                    }
+                  </div>
+                </div>
+
+                {/* Add custom parameter */}
+                <div>
+                  <p className="text-xs text-gray-500 mb-1 font-medium">Tambah Parameter Kustom:</p>
                   <div className="flex gap-2">
                     <input
                       type="text"
-                      placeholder="e.g. Frequency (Hz)"
+                      placeholder="Nama (mis. Vavg)"
                       className="flex-1 p-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                       value={customParamInput}
                       onChange={e => setCustomParamInput(e.target.value)}
                       onKeyDown={e => {
                         if (e.key === 'Enter') {
                           e.preventDefault();
-                          const newParam = customParamInput.trim();
-                          if (newParam) {
-                            const currentParams = panelForm.parameters || [];
-                            if (!currentParams.includes(newParam)) {
-                              setPanelForm({ ...panelForm, parameters: [...currentParams, newParam] });
+                          const n = customParamInput.trim();
+                          if (n) {
+                            const current = ((panelForm.parameters || []) as any[]).map(normalizeParameter);
+                            if (!current.find((p: PanelParameterDef) => p.name === n)) {
+                              setPanelForm({ ...panelForm, parameters: [...current, { name: n, unit: customUnitInput.trim() }] });
                             }
                             setCustomParamInput('');
+                            setCustomUnitInput('');
                           }
                         }
                       }}
                     />
+                    <input
+                      type="text"
+                      placeholder="Satuan"
+                      className="w-20 p-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                      value={customUnitInput}
+                      onChange={e => setCustomUnitInput(e.target.value)}
+                    />
                     <button
                       type="button"
                       onClick={() => {
-                        const newParam = customParamInput.trim();
-                        if (newParam) {
-                          const currentParams = panelForm.parameters || [];
-                          if (!currentParams.includes(newParam)) {
-                            setPanelForm({ ...panelForm, parameters: [...currentParams, newParam] });
+                        const n = customParamInput.trim();
+                        if (n) {
+                          const current = ((panelForm.parameters || []) as any[]).map(normalizeParameter);
+                          if (!current.find((p: PanelParameterDef) => p.name === n)) {
+                            setPanelForm({ ...panelForm, parameters: [...current, { name: n, unit: customUnitInput.trim() }] });
                           }
                           setCustomParamInput('');
+                          setCustomUnitInput('');
                         }
                       }}
-                      className="px-3 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors"
+                      className="px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
                     >
                       <Plus size={18} />
                     </button>

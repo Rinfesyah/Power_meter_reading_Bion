@@ -4,12 +4,12 @@ import MobileOperatorView from './components/MobileOperatorView';
 import { fetchReadings, saveReading } from './services/backendService';
 
 const DEFAULT_PANELS: Panel[] = [
-  { id: 'p1', name: 'Panel-001', location: 'Zone A', type: 'Digital', parameters: ['voltage', 'current', 'power'] },
-  { id: 'p2', name: 'Panel-002', location: 'Zone A', type: 'Digital', parameters: ['voltage', 'current', 'power'] },
-  { id: 'p3', name: 'UPS A', location: 'Power Room', type: 'Analog', parameters: ['voltage', 'current', 'temperature'] },
-  { id: 'p4', name: 'UPS B', location: 'Power Room', type: 'Analog', parameters: ['voltage', 'current', 'temperature'] },
-  { id: 'p5', name: 'PAC A', location: 'Cooling', type: 'Digital', parameters: ['temperature', 'humidity'] },
-  { id: 'p6', name: 'PAC B', location: 'Cooling', type: 'Digital', parameters: ['temperature', 'humidity'] },
+  { id: 'p1', name: 'Panel-001', location: 'Zone A',    type: 'Digital', parameters: [{ name: 'Vavg', unit: 'V' }, { name: 'Iavg', unit: 'A' }, { name: 'Ptot', unit: 'kW' }] },
+  { id: 'p2', name: 'Panel-002', location: 'Zone A',    type: 'Digital', parameters: [{ name: 'Vavg', unit: 'V' }, { name: 'Iavg', unit: 'A' }, { name: 'Ptot', unit: 'kW' }] },
+  { id: 'p3', name: 'UPS A',    location: 'Power Room', type: 'Analog',  parameters: [{ name: 'Vavg', unit: 'V' }, { name: 'Iavg', unit: 'A' }, { name: 'Temperature', unit: '°C' }] },
+  { id: 'p4', name: 'UPS B',    location: 'Power Room', type: 'Analog',  parameters: [{ name: 'Vavg', unit: 'V' }, { name: 'Iavg', unit: 'A' }, { name: 'Temperature', unit: '°C' }] },
+  { id: 'p5', name: 'PAC A',    location: 'Cooling',    type: 'Digital', parameters: [{ name: 'Temperature', unit: '°C' }, { name: 'Humidity', unit: '%' }] },
+  { id: 'p6', name: 'PAC B',    location: 'Cooling',    type: 'Digital', parameters: [{ name: 'Temperature', unit: '°C' }, { name: 'Humidity', unit: '%' }] },
 ];
 
 const App: React.FC = () => {

@@ -10,7 +10,7 @@ import csv
 import threading
 import queue
 import time
-from typing import List, Optional
+from typing import List, Optional, Any
 from pydantic import BaseModel, ConfigDict
 from ocr_engine import process_image, learn_correction
 
@@ -20,7 +20,7 @@ class PanelModel(BaseModel):
     name: str
     location: str
     type: str # "Digital" or "Analog"
-    parameters: List[str] = []
+    parameters: List[Any] = []  # [{"name": "Vavg", "unit": "V"}, ...] or legacy ["voltage", ...]
 
 class ReadingModel(BaseModel):
     model_config = ConfigDict(extra='allow')
@@ -104,6 +104,7 @@ def ocr_worker():
             file_path = task['file_path']
             panel_name = task['panel_name']
             params_list = task['params_list']
+            params_defs = task.get('params_defs', [])
             
             # Wait a moment for the mobile app to finish saving the reading record
             time.sleep(2) 
@@ -111,6 +112,10 @@ def ocr_worker():
             
             try:
                 ocr_data = process_image(file_path, panel_name, panel_params=params_list)
+                
+                # Embed params_defs so dashboard can reconstruct units
+                if params_defs:
+                    ocr_data['params_defs'] = params_defs
                 
                 json_path = file_path + ".json"
                 with open(json_path, 'w') as f:
@@ -189,14 +194,30 @@ async def ocr_endpoint(
         from urllib.parse import quote
         image_url = f"{request.base_url}images/{quote(folder_name)}/{filename}"
         
-        params_list = json.loads(panel_params) if panel_params else None
+        params_raw = json.loads(panel_params) if panel_params else None
+        
+        # Support new {name, unit} format — extract just the names for OCR engine
+        if params_raw and isinstance(params_raw, list) and len(params_raw) > 0:
+            if isinstance(params_raw[0], dict):
+                # New format: [{name: "Vavg", unit: "V"}, ...]
+                params_list = [p.get("name", "") for p in params_raw if p.get("name")]
+                # Keep full param defs for unit lookup
+                params_defs = params_raw
+            else:
+                # Legacy string format
+                params_list = params_raw
+                params_defs = [{"name": p, "unit": ""} for p in params_raw]
+        else:
+            params_list = None
+            params_defs = []
         
         # 3. Queue the OCR Task (matching by filename later)
         ocr_queue.put({
             "filename": filename,
             "file_path": file_location,
             "panel_name": panel_name,
-            "params_list": params_list
+            "params_list": params_list,
+            "params_defs": params_defs
         })
 
         return {"status": "ok", "filename": filename, "image_url": image_url}

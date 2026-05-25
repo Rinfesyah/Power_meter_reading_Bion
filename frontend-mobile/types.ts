@@ -4,43 +4,56 @@ export enum AppMode {
 }
 
 export enum ReadingStatus {
-  PENDING = 'PENDING', // Uploaded by mobile, waiting for admin
-  VERIFIED = 'VERIFIED', // Approved by admin
+  PENDING = 'PENDING',
+  VERIFIED = 'VERIFIED',
   REJECTED = 'REJECTED'
 }
 
 export type Shift = '1' | '2' | '3';
 
+export interface PanelParameterDef {
+  name: string;
+  unit: string;
+}
+
 export type PanelParameter = string;
 
 export interface Panel {
   id: string;
-  name: string; // e.g., "UPS A", "Panel-001"
-  location: string; // e.g., "Room 101"
-  type: string; // e.g., "Analog", "Digital"
-  parameters?: PanelParameter[];
+  name: string;
+  location: string;
+  type: string;
+  parameters?: PanelParameterDef[];
+}
+
+export interface VerifiedReading {
+  name: string;
+  value: number | null;
+  unit: string;
 }
 
 export interface InstrumentReading {
   id: string;
   timestamp: number;
-  imageUrl: string; // Base64 or URL
+  imageUrl: string;
   panelId: string;
-  panelName: string; // Denormalized for easier display
+  panelName: string;
   operatorName: string;
   shift: Shift;
-  hour?: string; // Format "HH:MM"
+  hour?: string;
 
-  // Metrics
-  voltage?: number; // V
-  current?: number; // A
-  temperature?: number; // Celsius
-  humidity?: number; // %
-  power?: number; // kW
+  voltage?: number;
+  current?: number;
+  temperature?: number;
+  humidity?: number;
+  power?: number;
+
+  ocrReadings?: Record<string, number | null>;
+  verifiedReadings?: VerifiedReading[];
 
   status: ReadingStatus;
   notes?: string;
-  [key: string]: any; // Allow custom metric fields
+  [key: string]: any;
 }
 
 export interface OCRResult {
@@ -51,4 +64,13 @@ export interface OCRResult {
   power?: number;
   rawText?: string;
   imageUrl?: string;
+}
+
+export function normalizeParameter(param: any): PanelParameterDef {
+  if (typeof param === 'string') {
+    const match = param.match(/^(.+?)\s*\((.+?)\)$/);
+    if (match) return { name: match[1].trim(), unit: match[2].trim() };
+    return { name: param, unit: '' };
+  }
+  return param as PanelParameterDef;
 }

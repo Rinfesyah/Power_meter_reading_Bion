@@ -198,7 +198,7 @@ const MobileOperatorView: React.FC<Props> = ({ panels, readings, onSave }) => {
           selectedPanel!.id,
           session?.shift || '1',
           session?.name || 'Unknown',
-          selectedPanel?.parameters || []
+          (selectedPanel?.parameters || []) as any[] // send full {name, unit} objects
         );
 
         finalImageUrl = uploadResult.imageUrl || base64Preview;
