@@ -12,6 +12,12 @@ try:
 except ImportError:
     YOLO_AVAILABLE = False
 
+try:
+    import paddlex as px
+    PADDLE_AVAILABLE = True
+except ImportError:
+    PADDLE_AVAILABLE = False
+
 # --- CONFIGURATION ---
 BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DB_PATH = os.path.abspath(os.path.join(BACKEND_DIR, "..", "..", "database"))
@@ -20,6 +26,20 @@ MODELS_DIR = os.path.join(BACKEND_DIR, "models")
 TESSDATA_DIR = os.path.join(MODELS_DIR, "tessdata")
 YOLO_TEXT_MODEL = os.path.join(MODELS_DIR, "yolo_text_detect.pt")
 YOLO_DEVICE_MODEL = os.path.join(MODELS_DIR, "yolo_device_detect.pt")
+
+PADDLE_MODEL_DIR = os.path.join(MODELS_DIR, "power_meter_rec_inference", "PaddleOCR", "inference", "power_meter_rec").replace("\\", "/")
+
+paddle_ocr_engine = None
+if PADDLE_AVAILABLE and os.path.exists(PADDLE_MODEL_DIR):
+    try:
+        print("[OCR] Loading PaddleOCR model...")
+        paddle_ocr_engine = px.create_model(
+            'en_PP-OCRv4_mobile_rec',
+            model_dir=PADDLE_MODEL_DIR
+        )
+        print("[OCR] PaddleOCR model loaded successfully!")
+    except Exception as e:
+        print(f"[OCR] ERROR loading PaddleOCR: {e}")
 
 # Tesseract setup
 if os.name == 'nt':
@@ -85,10 +105,12 @@ def deskew(img):
     angles = []
     if lines is not None:
         for line in lines:
-            x1, y1, x2, y2 = line[0]
-            angle = np.degrees(np.arctan2(y2 - y1, x2 - x1))
-            if -45 < angle < 45:
-                angles.append(angle)
+            flat = line.flatten()
+            if len(flat) == 4:
+                x1, y1, x2, y2 = flat
+                angle = np.degrees(np.arctan2(y2 - y1, x2 - x1))
+                if -45 < angle < 45:
+                    angles.append(angle)
     if angles:
         median_angle = np.median(angles)
         if 0.5 < abs(median_angle) < 30.0:
@@ -394,8 +416,28 @@ def process_image(image_path: str, panel_name: str = "Unknown",
             
             processed = preprocess_crop(crop)
             try:
-                # Use --psm 7 for single line/word crops
-                text = pytesseract.image_to_string(processed, config=_cfg(7)).strip()
+                pred_text = ""
+                # Prioritas 1: PaddleOCR pada crop asli
+                if paddle_ocr_engine is not None:
+                    try:
+                        result = list(paddle_ocr_engine.predict(crop))
+                        if result and len(result) > 0:
+                            pred_text = result[0].get('rec_text', '').strip()
+                            rec_score = result[0].get('rec_score', 0)
+                            box['conf'] = rec_score
+                        if pred_text:
+                            print(f"[OCR]   PaddleOCR read: '{pred_text}' (conf: {box['conf']:.2f})")
+                    except Exception as pe:
+                        print(f"[OCR]   PaddleOCR error: {pe}")
+
+                # Prioritas 2: Tesseract sebagai fallback
+                if not pred_text:
+                    try:
+                        pred_text = pytesseract.image_to_string(processed, config=_cfg(7)).strip()
+                    except:
+                        pass
+
+                text = pred_text
                 if text:
                     # Raw numeric cleaning
                     num_match = re.search(r"(\d+[\.,]\d+)", text)
@@ -409,7 +451,6 @@ def process_image(image_path: str, panel_name: str = "Unknown",
                     found_row = False
                     row_tolerance = max(15, h * 0.5) 
                     for row in rows:
-                        # Compare with center Y to be more accurate
                         row_center_y = row[0]['box']['top'] + row[0]['box']['height'] / 2
                         current_center_y = y + h / 2
                         if abs(row_center_y - current_center_y) < row_tolerance:

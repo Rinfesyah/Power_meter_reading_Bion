@@ -1,7 +1,12 @@
 fastapi
 uvicorn
 python-multipart
-opencv-python
+opencv-contrib-python
 numpy
 pytesseract
 ultralytics
+paddlex
+paddlepaddle
+python-bidi
+pypdfium2
+openpyxl
