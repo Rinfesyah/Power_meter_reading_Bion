@@ -64,6 +64,7 @@ const WebDashboard: React.FC<Props> = ({
   const yoloTextRef = useRef<HTMLInputElement>(null);
   const yoloDeviceRef = useRef<HTMLInputElement>(null);
   const tesseractRef = useRef<HTMLInputElement>(null);
+  const paddleOcrRef = useRef<HTMLInputElement>(null);
   const [ocrLoading, setOcrLoading] = useState(false);
   const BACKEND_URL = 'http://localhost:8000';
 
@@ -866,7 +867,7 @@ const WebDashboard: React.FC<Props> = ({
           </div>
           <div>
             <h3 className="text-lg font-bold text-gray-800">Model Management</h3>
-            <p className="text-sm text-gray-500">Upload model hasil pelatihan (YOLO & Tesseract) ke server.</p>
+            <p className="text-sm text-gray-500">Upload model hasil pelatihan (YOLO, Tesseract & PaddleOCR) ke server.</p>
           </div>
         </div>
 
@@ -875,6 +876,7 @@ const WebDashboard: React.FC<Props> = ({
             { label: 'YOLO Text/Digit Detection (.pt)', key: 'yolo-text', endpoint: '/api/models/upload/yolo-text', accept: '.pt', ref: yoloTextRef },
             { label: 'YOLO Device Detection (.pt)', key: 'yolo-device', endpoint: '/api/models/upload/yolo-device', accept: '.pt', ref: yoloDeviceRef },
             { label: 'Tesseract Custom Model (.traineddata)', key: 'tesseract', endpoint: '/api/models/upload/tesseract', accept: '.traineddata', ref: tesseractRef },
+            { label: 'PaddleOCR Model (.zip)', key: 'paddleocr', endpoint: '/api/models/upload/paddleocr', accept: '.zip', ref: paddleOcrRef },
           ].map(m => (
             <div key={m.key} className="flex items-center justify-between p-4 border border-gray-200 rounded-xl bg-gray-50">
               <div>

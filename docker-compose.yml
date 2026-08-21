@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      # Sinkronisasi kode backend untuk mempermudah pengembangan (live reload)
+      - ./backend:/app
+      # Petakan database yang berada di luar folder dc-ops-ocr (sibling folder)
+      # agar terbaca di dalam root directory container sesuai pathing python (/database)
+      - ../database:/database
+
+  frontend-dashboard:
+    build:
+      context: ./frontend-dashboard
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    volumes:
+      # Sinkronisasi kode frontend-dashboard
+      - ./frontend-dashboard:/app
+      # Menghindari node_modules container tertimpa oleh folder lokal Windows
+      - /app/node_modules
+
+
+  frontend-mobile:
+    build:
+      context: ./frontend-mobile
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3001"
+    volumes:
+      # Sinkronisasi kode frontend-mobile
+      - ./frontend-mobile:/app
+      # Menghindari node_modules container tertimpa oleh folder lokal Windows
+      - /app/node_modules

@@ -4,6 +4,7 @@ from fastapi.staticfiles import StaticFiles
 import uvicorn
 import shutil
 import os
+import zipfile
 import datetime
 import json
 import csv
@@ -322,6 +323,23 @@ async def upload_tesseract(file: UploadFile = File(...)):
     with open(path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
     return {"status": "success", "message": "Tesseract model uploaded"}
+
+@app.post("/api/models/upload/paddleocr")
+async def upload_paddleocr(file: UploadFile = File(...)):
+    if not file.filename.endswith(".zip"):
+        return {"status": "error", "message": "Only .zip files allowed"}
+    zip_path = os.path.join(MODELS_DIR, "power_meter_rec_inference.zip")
+    extract_dir = os.path.join(MODELS_DIR, "power_meter_rec_inference")
+    with open(zip_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+    try:
+        if os.path.exists(extract_dir):
+            shutil.rmtree(extract_dir)
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(extract_dir)
+        return {"status": "success", "message": f"PaddleOCR model uploaded & extracted ({os.path.getsize(zip_path)//1024} KB). Restart backend untuk memuat ulang model."}
+    except Exception as e:
+        return {"status": "error", "message": f"Gagal mengekstrak zip: {e}"}
 
 # ====== OCR ======
 
