@@ -48,9 +48,6 @@ const App: React.FC = () => {
 
   useEffect(() => {
     loadReadings();
-    // Poll every 5 seconds for new readings from mobile
-    const interval = setInterval(loadReadings, 5000);
-    return () => clearInterval(interval);
   }, [loadReadings]);
 
   // Persist sheet URL
@@ -140,6 +137,7 @@ const App: React.FC = () => {
         onAddPanel={handleAddPanel}
         onUpdatePanel={handleUpdatePanel}
         onDeletePanel={handleDeletePanel}
+        onRefreshReadings={loadReadings}
       />
     </div>
   );

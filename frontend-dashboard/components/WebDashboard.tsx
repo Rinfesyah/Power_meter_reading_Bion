@@ -19,6 +19,7 @@ interface Props {
   onAddPanel: (panel: Panel) => void;
   onUpdatePanel: (panel: Panel) => void;
   onDeletePanel: (id: string) => void;
+  onRefreshReadings: () => Promise<void>;
 }
 
 type Tab = 'dashboard' | 'verification' | 'panels' | 'reports' | 'rejected' | 'settings';
@@ -36,7 +37,7 @@ const PRESET_PARAMS: PanelParameterDef[] = [
 ];
 
 const WebDashboard: React.FC<Props> = ({
-  readings, panels, googleSheetUrl, onUpdateGoogleSheetUrl, onUpdateReading, onDeleteReading, onAddPanel, onUpdatePanel, onDeletePanel
+  readings, panels, googleSheetUrl, onUpdateGoogleSheetUrl, onUpdateReading, onDeleteReading, onAddPanel, onUpdatePanel, onDeletePanel, onRefreshReadings
 }) => {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
   const [editingReading, setEditingReading] = useState<InstrumentReading | null>(null);
@@ -66,7 +67,17 @@ const WebDashboard: React.FC<Props> = ({
   const tesseractRef = useRef<HTMLInputElement>(null);
   const paddleOcrRef = useRef<HTMLInputElement>(null);
   const [ocrLoading, setOcrLoading] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const BACKEND_URL = 'http://localhost:8000';
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await onRefreshReadings();
+    } finally {
+      setTimeout(() => setIsRefreshing(false), 500);
+    }
+  };
 
   // Open verification modal: fetch OCR results from backend first
   const openVerification = async (reading: InstrumentReading) => {
@@ -467,9 +478,20 @@ const WebDashboard: React.FC<Props> = ({
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h3 className="text-xl font-bold text-gray-800">Verification Queue</h3>
-        <span className="px-3 py-1 bg-yellow-100 text-yellow-700 rounded-full text-sm font-medium">
-          {pendingReadings.length} Pending
-        </span>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            className="flex items-center gap-2 px-3 py-1.5 bg-blue-50 text-blue-600 border border-blue-200 rounded-lg text-sm font-medium hover:bg-blue-100 transition-all disabled:opacity-60"
+            title="Refresh data dari backend"
+          >
+            <RotateCcw size={16} className={isRefreshing ? 'animate-spin' : ''} />
+            {isRefreshing ? 'Refreshing...' : 'Refresh'}
+          </button>
+          <span className="px-3 py-1 bg-yellow-100 text-yellow-700 rounded-full text-sm font-medium">
+            {pendingReadings.length} Pending
+          </span>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">

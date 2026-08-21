@@ -1,3 +1,11 @@
+# Force all print() calls to flush immediately (fixes Docker log visibility for background threads)
+import builtins
+_builtin_print = builtins.print
+def _flush_print(*args, **kwargs):
+    kwargs.setdefault('flush', True)
+    return _builtin_print(*args, **kwargs)
+builtins.print = _flush_print
+
 from fastapi import FastAPI, UploadFile, File, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
