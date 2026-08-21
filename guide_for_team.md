@@ -19,6 +19,7 @@ Tidak memerlukan install Git. Cukup instal Docker Desktop untuk Mac.
 Pilih tipe installer Docker yang sesuai dengan prosesor Mac Anda: Apple Silicon (Chip M1/M2/M3) atau Intel Chip.
 Jalankan semua perintah terminal menggunakan aplikasi Terminal bawaan Mac atau VS Code Terminal.```
 
+
 ---
 
 ## 🚀 Bagian 2: Langkah Setup Awal (Pertama Kali)
