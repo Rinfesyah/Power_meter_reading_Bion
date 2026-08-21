@@ -15,7 +15,7 @@ NOTE
 
 Catatan untuk Pengguna macOS (Macbook):
 
-Anda tidak memerlukan WSL 2. Cukup instal Docker Desktop untuk Mac.
+Tidak memerlukan install Git. Cukup instal Docker Desktop untuk Mac.
 Pilih tipe installer Docker yang sesuai dengan prosesor Mac Anda: Apple Silicon (Chip M1/M2/M3) atau Intel Chip.
 Jalankan semua perintah terminal menggunakan aplikasi Terminal bawaan Mac atau VS Code Terminal.
 
