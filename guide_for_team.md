@@ -29,7 +29,7 @@ Ikuti langkah-langkah di bawah ini untuk mengambil proyek dan menjalankannya unt
 ### Langkah 1: Clone Repositori dari GitHub
 Buka Terminal (atau PowerShell) Anda, masuk ke folder tempat biasa Anda menyimpan proyek (misal: `D:\Projects`), lalu jalankan perintah:
 ```powershell
-git clone https://github.com/Rinfesyah/Workplace_IDP.git
+git clone https://github.com/Rinfesyah/Power_meter_reading_Bion.git
 cd Workplace_IDP
 ```
 
