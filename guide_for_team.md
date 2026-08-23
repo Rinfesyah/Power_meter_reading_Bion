@@ -29,8 +29,8 @@ Ikuti langkah-langkah di bawah ini untuk mengambil proyek dan menjalankannya unt
 ### Langkah 1: Clone Repositori dari GitHub
 Buka Terminal (atau PowerShell) Anda, masuk ke folder tempat biasa Anda menyimpan proyek (misal: `D:\Projects`), lalu jalankan perintah:
 ```powershell
-git clone https://github.com/Rinfesyah/Workplace_IDP.git
-cd Workplace_IDP
+git clone https://github.com/Rinfesyah/Power_meter_reading_Bion.git
+cd Power_meter_reading_Bion
 ```
 
 ### Langkah 2: Berpindah ke Branch Pengembangan
@@ -41,7 +41,7 @@ git checkout main
 
 ### Langkah 3: Unduh File Model AI YOLO (Hanya Jika Belum Ada)
 Jika folder `backend/models/` di komputer Anda belum berisi file model `.pt`, mintalah file model tersebut kepada ML Engineer melalui Google Drive bersama, lalu letakkan di folder:
-`Workplace_IDP/dc-ops-ocr/backend/models/`
+`Power_meter_reading_Bion/dc-ops-ocr/backend/models/`
 
 ### Langkah 4: Bangun & Jalankan Aplikasi
 Jalankan Docker Compose untuk membangun container pertama kali:
@@ -139,7 +139,7 @@ git push origin fitur-tabel-laporan
 Setelah fitur selesai diuji dan siap digabungkan ke branch utama (`main`), pilih salah satu metode di bawah ini:
 
 #### **Metode A: Melalui Pull Request di GitHub (Sangat Direkomendasikan)**
-1. Buka halaman repositori Anda di GitHub: [GitHub Workplace_IDP](https://github.com/Rinfesyah/Workplace_IDP)
+1. Buka halaman repositori Anda di GitHub: [GitHub Power_meter_reading_Bion](https://github.com/Rinfesyah/Power_meter_reading_Bion)
 2. Anda akan melihat tombol kuning berbunyi **"Compare & pull request"** untuk branch yang baru saja di-push. Klik tombol tersebut.
 3. Tulis deskripsi perubahan Anda dan klik **"Create pull request"**.
 4. Diskusikan dengan tim/lakukan review, lalu klik **"Merge pull request"** di GitHub jika sudah disetujui.
