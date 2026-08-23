@@ -88,3 +88,69 @@ git push origin main
 #### **Langkah 4: Kabari Tim Anda**
 Kirim pesan singkat di grup chat tim: 
 > *"Halo tim, saya sudah push update grafik dashboard terbaru ke branch `main`. Silakan lakukan `git pull` sebelum lanjut bekerja!"*
+
+---
+
+## 🌿 Bagian 4: Simulasi Membuat Branch Baru & Melakukan Merge ke Main
+
+Untuk menjaga kestabilan kode di branch `main`, sangat disarankan agar setiap fitur/perbaikan baru dibuat di branch terpisah (*feature branch*) terlebih dahulu sebelum digabungkan ke `main`. 
+
+Berikut adalah simulasi langkah-demi-langkah bagi tim:
+
+### Langkah 1: Pastikan Branch `main` Lokal Terupdate
+Sebelum membuat branch baru, pastikan Anda berada di `main` dan menarik update terbaru:
+```powershell
+git checkout main
+git pull origin main
+```
+
+### Langkah 2: Buat & Berpindah ke Branch Baru
+Buat branch baru dengan nama yang deskriptif terkait fitur yang dikerjakan (contoh: `fitur-tabel-laporan` atau `perbaikan-ocr-analog`):
+```powershell
+# Format: git checkout -b <nama-branch-baru>
+git checkout -b fitur-tabel-laporan
+```
+*(Catatan: Parameter `-b` digunakan untuk membuat branch baru sekaligus berpindah ke dalamnya).*
+
+### Langkah 3: Bekerja & Commit Perubahan pada Branch Baru
+Lakukan modifikasi kode Anda di editor seperti biasa. Setelah selesai, lakukan commit di branch baru tersebut:
+```powershell
+git add .
+git commit -m "fitur: menambahkan filter tanggal pada tabel laporan"
+```
+
+### Langkah 4: Push Branch Baru ke GitHub
+Kirim branch baru Anda ke GitHub agar tim lain dapat melihat atau mereview-nya:
+```powershell
+# Format: git push origin <nama-branch-baru>
+git push origin fitur-tabel-laporan
+```
+
+### Langkah 5: Menggabungkan (Merge) Branch ke `main`
+Setelah fitur selesai diuji dan siap digabungkan ke branch utama (`main`), pilih salah satu metode di bawah ini:
+
+#### **Metode A: Melalui Pull Request di GitHub (Sangat Direkomendasikan)**
+1. Buka halaman repositori Anda di GitHub: [GitHub Workplace_IDP](https://github.com/Rinfesyah/Workplace_IDP)
+2. Anda akan melihat tombol kuning berbunyi **"Compare & pull request"** untuk branch yang baru saja di-push. Klik tombol tersebut.
+3. Tulis deskripsi perubahan Anda dan klik **"Create pull request"**.
+4. Diskusikan dengan tim/lakukan review, lalu klik **"Merge pull request"** di GitHub jika sudah disetujui.
+5. Setelah di-merge di GitHub, tim lain (dan Anda sendiri) cukup melakukan `git pull origin main` di branch `main` lokal masing-masing untuk mengambil perubahan tersebut.
+
+#### **Metode B: Melalui Merge Lokal di Komputer Anda**
+Jika ingin melakukan penggabungan sendiri secara lokal di komputer sebelum di-push ke GitHub:
+```powershell
+# 1. Berpindah kembali ke branch main
+git checkout main
+
+# 2. Pastikan main lokal Anda tetap yang paling baru
+git pull origin main
+
+# 3. Gabungkan branch fitur ke dalam main
+git merge fitur-tabel-laporan
+
+# 4. Kirim hasil penggabungan ke GitHub
+git push origin main
+
+# 5. Hapus branch fitur lokal yang sudah tidak digunakan (opsional)
+git branch -d fitur-tabel-laporan
+```
