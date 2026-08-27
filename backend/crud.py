@@ -1,6 +1,6 @@
 from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import desc
+from sqlalchemy import desc, func
 import models_db as models
 
 # ==========================================
@@ -16,10 +16,14 @@ def get_equipments(db: Session, active_only: bool = True) -> List[models.MasterE
     return query.all()
 
 def get_equipment_by_code_or_name(db: Session, identifier: str) -> Optional[models.MasterEquipment]:
+    clean_id = (identifier or "").strip()
     return db.query(models.MasterEquipment).options(
         joinedload(models.MasterEquipment.equipment_parameters).joinedload(models.EquipmentParameter.parameter)
     ).filter(
-        (models.MasterEquipment.equipment_code == identifier) | (models.MasterEquipment.name == identifier)
+        (func.lower(models.MasterEquipment.equipment_code) == clean_id.lower()) |
+        (func.lower(models.MasterEquipment.name) == clean_id.lower()) |
+        (models.MasterEquipment.equipment_code == clean_id.replace(' ', '_').replace('.', '_').upper()) |
+        (models.MasterEquipment.equipment_code == f"PNL-{clean_id.replace(' ', '_').replace('.', '_').upper()}")
     ).first()
 
 def create_or_update_equipment(
@@ -30,15 +34,17 @@ def create_or_update_equipment(
     equipment_code: Optional[str] = None,
     parameters: Optional[List[Dict[str, Any]]] = None
 ) -> models.MasterEquipment:
-    code = equipment_code or f"PNL-{name.replace(' ', '_').upper()}"
+    clean_name = (name or "").strip()
+    code = equipment_code or f"PNL-{clean_name.replace(' ', '_').replace('.', '_').upper()}"
     eq = db.query(models.MasterEquipment).filter(
-        (models.MasterEquipment.equipment_code == code) | (models.MasterEquipment.name == name)
+        (func.lower(models.MasterEquipment.equipment_code) == code.lower()) |
+        (func.lower(models.MasterEquipment.name) == clean_name.lower())
     ).first()
 
     if not eq:
         eq = models.MasterEquipment(
             equipment_code=code,
-            name=name,
+            name=clean_name,
             location=location,
             category=category,
             status_active=True
@@ -47,7 +53,7 @@ def create_or_update_equipment(
         db.commit()
         db.refresh(eq)
     else:
-        eq.name = name
+        eq.name = clean_name
         eq.location = location
         eq.category = category
         db.commit()
@@ -64,10 +70,13 @@ def create_or_update_equipment(
             p_min = param.get("min") if isinstance(param, dict) else None
             p_max = param.get("max") if isinstance(param, dict) else None
 
-            # Get or create master_parameter
-            m_param = db.query(models.MasterParameter).filter(models.MasterParameter.parameter_name == p_name).first()
+            # Get or create master_parameter (case-insensitive)
+            clean_pname = str(p_name).strip()
+            m_param = db.query(models.MasterParameter).filter(
+                func.lower(models.MasterParameter.parameter_name) == clean_pname.lower()
+            ).first()
             if not m_param:
-                m_param = models.MasterParameter(parameter_name=p_name, unit=p_unit)
+                m_param = models.MasterParameter(parameter_name=clean_pname, unit=p_unit)
                 db.add(m_param)
                 db.commit()
                 db.refresh(m_param)
@@ -105,17 +114,25 @@ def delete_equipment(db: Session, equipment_id_or_code: str) -> bool:
 # ==========================================
 
 def get_or_create_user(db: Session, name: str) -> models.User:
-    user = db.query(models.User).filter(models.User.name == name).first()
+    clean_name = (name or "Unknown").strip()
+    badge = f"USR-{clean_name.replace(' ', '_').upper()}"
+    user = db.query(models.User).filter(
+        (func.lower(models.User.name) == clean_name.lower()) |
+        (func.lower(models.User.badge_number) == badge.lower())
+    ).first()
     if not user:
-        user = models.User(name=name, badge_number=f"USR-{name.replace(' ', '_').upper()}", role="Technician")
+        user = models.User(name=clean_name, badge_number=badge, role="Technician")
         db.add(user)
         db.commit()
         db.refresh(user)
     return user
 
 def get_or_create_shift(db: Session, shift_identifier: str) -> Optional[models.MasterShift]:
-    shift_name = f"Shift {shift_identifier}" if not shift_identifier.lower().startswith("shift") else shift_identifier
-    shift = db.query(models.MasterShift).filter(models.MasterShift.shift_name == shift_name).first()
+    clean_shift = (str(shift_identifier) if shift_identifier is not None else "1").strip()
+    shift_name = f"Shift {clean_shift}" if not clean_shift.lower().startswith("shift") else clean_shift
+    shift = db.query(models.MasterShift).filter(
+        func.lower(models.MasterShift.shift_name) == shift_name.lower()
+    ).first()
     if not shift:
         # Fallback default
         shift = db.query(models.MasterShift).first()
@@ -273,9 +290,14 @@ def save_reading_to_db(
 
     # Save to log_details
     for param_name, detail_data in details_map.items():
-        m_param = db.query(models.MasterParameter).filter(models.MasterParameter.parameter_name == param_name).first()
+        if not param_name:
+            continue
+        clean_pname = str(param_name).strip()
+        m_param = db.query(models.MasterParameter).filter(
+            func.lower(models.MasterParameter.parameter_name) == clean_pname.lower()
+        ).first()
         if not m_param:
-            m_param = models.MasterParameter(parameter_name=param_name, unit=detail_data.get("unit", ""))
+            m_param = models.MasterParameter(parameter_name=clean_pname, unit=detail_data.get("unit", ""))
             db.add(m_param)
             db.commit()
             db.refresh(m_param)

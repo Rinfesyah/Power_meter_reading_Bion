@@ -7,6 +7,7 @@ def _flush_print(*args, **kwargs):
 builtins.print = _flush_print
 
 from fastapi import FastAPI, UploadFile, File, Form, Request
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import uvicorn
@@ -19,9 +20,31 @@ import csv
 import threading
 import queue
 import time
-from typing import List, Optional, Any
+import asyncio
+from typing import List, Optional, Any, Set
 from pydantic import BaseModel, ConfigDict
 from ocr_engine import process_image, learn_correction
+
+# SSE Broadcaster State
+sse_clients: Set[asyncio.Queue] = set()
+MAIN_LOOP: Optional[asyncio.AbstractEventLoop] = None
+
+async def broadcast_event_async(event_type: str, data: Any = None):
+    """Broadcast an event to all connected SSE clients."""
+    if not sse_clients:
+        return
+    message = json.dumps({"type": event_type, "data": data})
+    for q in list(sse_clients):
+        try:
+            await q.put(message)
+        except Exception:
+            pass
+
+def broadcast_event(event_type: str, data: Any = None):
+    """Thread-safe event broadcast (can be called from worker thread or sync endpoints)."""
+    global MAIN_LOOP
+    if MAIN_LOOP and MAIN_LOOP.is_running():
+        asyncio.run_coroutine_threadsafe(broadcast_event_async(event_type, data), MAIN_LOOP)
 
 class PanelModel(BaseModel):
     model_config = ConfigDict(extra='allow')
@@ -87,6 +110,43 @@ MODELS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
 TESSDATA_DIR = os.path.join(MODELS_DIR, "tessdata")
 os.makedirs(TESSDATA_DIR, exist_ok=True)
 
+@app.on_event("startup")
+async def on_startup():
+    global MAIN_LOOP
+    MAIN_LOOP = asyncio.get_running_loop()
+
+@app.get("/api/events")
+async def sse_events(request: Request):
+    """Server-Sent Events endpoint for real-time dashboard updates."""
+    client_queue = asyncio.Queue()
+    sse_clients.add(client_queue)
+
+    async def event_generator():
+        try:
+            yield f"event: connected\ndata: {json.dumps({'status': 'connected'})}\n\n"
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    msg = await asyncio.wait_for(client_queue.get(), timeout=15.0)
+                    yield f"data: {msg}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keep-alive\n\n"
+        except asyncio.CancelledError:
+            pass
+        finally:
+            sse_clients.discard(client_queue)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
 # Ensure base folders exist
 os.makedirs(PHOTO_BASE_PATH, exist_ok=True)
 
@@ -140,6 +200,16 @@ def update_reading_status_by_filename(filename: str, ocr_status: str, ocr_result
             write_readings_to_file(readings)
     except Exception as e:
         print(f"Error updating status in JSON: {e}")
+
+    # 3. Broadcast real-time SSE event to Dashboard
+    try:
+        broadcast_event("READING_UPDATED", {
+            "filename": filename,
+            "ocr_status": ocr_status,
+            "ocrReadings": ocr_results.get("readings") if ocr_results else None
+        })
+    except Exception as e:
+        print(f"[SSE] Error broadcasting reading update: {e}")
 
 def ocr_worker():
     """Background thread that processes the FIFO queue sequentially."""
@@ -203,6 +273,61 @@ def read_readings_from_file():
 
 def write_readings_to_file(readings_list):
     with open(READINGS_DB_PATH, 'w') as f: json.dump(readings_list, f, indent=2)
+
+def sync_json_to_db():
+    """Initial one-time seed from JSON files into PostgreSQL on startup if DB is completely empty."""
+    try:
+        if not database.check_db_connection():
+            return
+        db = database.SessionLocal()
+        try:
+            # 1. Sync panels if none exist in DB
+            existing_panels = crud.get_equipments(db)
+            if not existing_panels:
+                panels = read_panels_from_file()
+                for p in panels:
+                    crud.create_or_update_equipment(
+                        db=db,
+                        name=p.get('name', ''),
+                        location=p.get('location', ''),
+                        category=p.get('type', 'Digital'),
+                        equipment_code=p.get('id'),
+                        parameters=p.get('parameters', [])
+                    )
+
+            # 2. Sync readings ONLY if PostgreSQL is completely empty (initial migration)
+            existing_headers = crud.get_all_log_headers(db, limit=1)
+            if not existing_headers:
+                readings = read_readings_from_file()
+                synced_count = 0
+                for r in readings:
+                    fn = r.get('ocrFilename') or ''
+                    crud.save_reading_to_db(
+                        db=db,
+                        panel_name=r.get('panelName') or 'Unknown Panel',
+                        operator_name=r.get('operatorName') or 'Unknown',
+                        shift_str=str(r.get('shift') or '1'),
+                        photo_path=r.get('imageUrl') or '',
+                        ocr_filename=fn,
+                        notes=r.get('notes') or '',
+                        status=r.get('ocr_status') or 'PENDING',
+                        validation_status=r.get('status') or 'PENDING',
+                        ocr_readings=r.get('ocrReadings'),
+                        verified_readings=r.get('verifiedReadings')
+                    )
+                    synced_count += 1
+                if synced_count > 0:
+                    print(f"[DB] Initial seed: migrated {synced_count} readings from JSON to PostgreSQL.")
+        finally:
+            db.close()
+    except Exception as e:
+        print(f"[DB] Error syncing JSON to DB: {e}")
+
+# Run initial sync on startup
+try:
+    sync_json_to_db()
+except Exception as e:
+    print(f"[DB] Startup sync error: {e}")
 
 def db_equipment_to_dict(eq: models_db.MasterEquipment) -> dict:
     params = []
@@ -382,6 +507,7 @@ def add_panel(panel: PanelModel):
     else:
         panels.append(panel.model_dump())
     write_panels_to_file(panels)
+    broadcast_event("PANELS_UPDATED", panel.model_dump())
     return get_panels()
 
 @app.put("/api/panels/{panel_id}", response_model=List[PanelModel])
@@ -403,6 +529,7 @@ def delete_panel(panel_id: str):
     panels = read_panels_from_file()
     panels = [p for p in panels if p['id'] != panel_id]
     write_panels_to_file(panels)
+    broadcast_event("PANELS_UPDATED", {"deleted_id": panel_id})
     return get_panels()
 
 # ====== READINGS CRUD ======
@@ -458,11 +585,19 @@ def add_reading(reading: ReadingModel):
     readings_list = read_readings_from_file()
     readings_list.insert(0, reading.model_dump())
     write_readings_to_file(readings_list)
+
+    # Broadcast real-time SSE event to Dashboard
+    try:
+        broadcast_event("READING_CREATED", reading.model_dump())
+    except Exception as e:
+        print(f"[SSE] Error broadcasting reading creation: {e}")
+
     return {"status": "ok", "total": len(readings_list)}
 
 @app.put("/api/readings/{reading_id}")
 def update_reading(reading_id: str, reading: ReadingModel):
-    """Update a reading (called by Dashboard for verification/editing)."""
+    """Update a reading (called by Dashboard for verification/editing/rejecting)."""
+    target_filename = reading.ocrFilename
     try:
         if database.check_db_connection():
             db = database.SessionLocal()
@@ -471,7 +606,6 @@ def update_reading(reading_id: str, reading: ReadingModel):
                 ocr_readings = reading_dict.get("ocrReadings", {})
                 verified_readings = reading_dict.get("verifiedReadings", [])
 
-                target_filename = reading.ocrFilename
                 if (not target_filename) and str(reading_id).isdigit():
                     h = crud.get_log_header_by_id(db, int(reading_id))
                     if h:
@@ -496,21 +630,91 @@ def update_reading(reading_id: str, reading: ReadingModel):
         print(f"[DB] Error updating reading in DB: {e}")
 
     readings_list = read_readings_from_file()
-    readings_list = [reading.model_dump() if str(r.get('id')) == str(reading_id) else r for r in readings_list]
+    updated = False
+    for idx, r in enumerate(readings_list):
+        if str(r.get('id')) == str(reading_id) or (target_filename and r.get('ocrFilename') == target_filename):
+            readings_list[idx] = reading.model_dump()
+            updated = True
+            break
+    if not updated:
+        readings_list.append(reading.model_dump())
     write_readings_to_file(readings_list)
+
+    # Broadcast real-time SSE event
+    try:
+        broadcast_event("READING_UPDATED", reading.model_dump())
+    except Exception as e:
+        print(f"[SSE] Error broadcasting reading update: {e}")
+
     return {"status": "ok"}
+
+
+def delete_photo_files_from_disk(photo_url_or_path: str = None, filename: str = None):
+    """Delete physical image file and associated OCR json file from PHOTO_BASE_PATH."""
+    try:
+        import urllib.parse
+        # 1. If photo_url_or_path provided, resolve path relative to /images/
+        if photo_url_or_path:
+            parsed_path = urllib.parse.unquote(str(photo_url_or_path))
+            if "/images/" in parsed_path:
+                rel_path = parsed_path.split("/images/", 1)[1]
+                full_file_path = os.path.join(PHOTO_BASE_PATH, rel_path)
+                if os.path.exists(full_file_path):
+                    try:
+                        os.remove(full_file_path)
+                        print(f"[STORAGE] Deleted physical image: {full_file_path}")
+                    except Exception as e:
+                        print(f"[STORAGE] Error deleting image {full_file_path}: {e}")
+                
+                # Check .json variants
+                base_no_ext, _ = os.path.splitext(full_file_path)
+                for ext in [".json", ".jpg.json", ".png.json"]:
+                    json_candidate = base_no_ext + ext
+                    if os.path.exists(json_candidate):
+                        try:
+                            os.remove(json_candidate)
+                            print(f"[STORAGE] Deleted associated json: {json_candidate}")
+                        except Exception:
+                            pass
+                direct_json = full_file_path + ".json"
+                if os.path.exists(direct_json):
+                    try:
+                        os.remove(direct_json)
+                        print(f"[STORAGE] Deleted direct json: {direct_json}")
+                    except Exception:
+                        pass
+
+        # 2. If filename provided, search across PHOTO_BASE_PATH recursively
+        if filename:
+            fn_base = os.path.splitext(filename)[0]
+            for root, dirs, files in os.walk(PHOTO_BASE_PATH):
+                for f in files:
+                    if f == filename or f.startswith(fn_base):
+                        f_path = os.path.join(root, f)
+                        if os.path.exists(f_path):
+                            try:
+                                os.remove(f_path)
+                                print(f"[STORAGE] Deleted file by filename search: {f_path}")
+                            except Exception as e:
+                                print(f"[STORAGE] Error deleting {f_path}: {e}")
+    except Exception as e:
+        print(f"[STORAGE] Error in delete_photo_files_from_disk: {e}")
 
 
 @app.delete("/api/readings/{reading_id}")
 def delete_reading(reading_id: str):
-    """Delete a reading."""
+    """Delete a reading permanently from PostgreSQL, JSON, and physical disk."""
+    target_fn = None
+    target_photo_path = None
     try:
         if database.check_db_connection():
             db = database.SessionLocal()
             try:
-                if reading_id.isdigit():
+                if str(reading_id).isdigit():
                     h = crud.get_log_header_by_id(db, int(reading_id))
                     if h:
+                        target_fn = h.ocr_filename
+                        target_photo_path = h.photo_path
                         db.delete(h)
                         db.commit()
             finally:
@@ -518,9 +722,30 @@ def delete_reading(reading_id: str):
     except Exception as e:
         print(f"[DB] Error deleting reading in DB: {e}")
 
+    # Remove from JSON file (match by ID or filename)
     readings_list = read_readings_from_file()
-    readings_list = [r for r in readings_list if r['id'] != reading_id]
+    for r in readings_list:
+        if str(r.get('id')) == str(reading_id) or (target_fn and r.get('ocrFilename') == target_fn):
+            if not target_photo_path:
+                target_photo_path = r.get('imageUrl')
+            if not target_fn:
+                target_fn = r.get('ocrFilename')
+
+    readings_list = [
+        r for r in readings_list
+        if str(r.get('id')) != str(reading_id) and (not target_fn or r.get('ocrFilename') != target_fn)
+    ]
     write_readings_to_file(readings_list)
+
+    # Delete physical image file and .json metadata from disk
+    delete_photo_files_from_disk(photo_url_or_path=target_photo_path, filename=target_fn)
+
+    # Broadcast real-time SSE event
+    try:
+        broadcast_event("READING_DELETED", {"id": reading_id, "filename": target_fn})
+    except Exception as e:
+        print(f"[SSE] Error broadcasting reading deletion: {e}")
+
     return {"status": "ok"}
 
 

@@ -6,7 +6,7 @@ import {
 import {
   Activity, Download, Search, Thermometer, Zap, CheckSquare, Trash2, Plus, Edit2,
   LayoutDashboard, Settings, FileSpreadsheet, Filter, Printer, XCircle, RotateCcw,
-  Link, Save, Database, Server, Loader2, CheckCircle, AlertCircle, Clock, Upload, Cpu, X
+  Link, Save, Database, Server, Loader2, CheckCircle, AlertCircle, Clock, Upload, Cpu, X, Eye
 } from 'lucide-react';
 
 interface Props {
@@ -41,6 +41,7 @@ const WebDashboard: React.FC<Props> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
   const [editingReading, setEditingReading] = useState<InstrumentReading | null>(null);
+  const [previewImage, setPreviewImage] = useState<{ url: string; title?: string; subtitle?: string } | null>(null);
 
   // Sync State
   const [isSyncing, setIsSyncing] = useState(false);
@@ -604,14 +605,28 @@ const WebDashboard: React.FC<Props> = ({
               <th className="px-6 py-4">Panel Info</th>
               <th className="px-6 py-4">Time / Operator</th>
               <th className="px-6 py-4">Status</th>
+              <th className="px-6 py-4">Notes</th>
               <th className="px-6 py-4 text-right">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {rejectedReadings.map((reading) => (
-              <tr key={reading.id} className="hover:bg-gray-50">
+              <tr key={reading.id} className="hover:bg-gray-50 transition-colors">
                 <td className="px-6 py-4">
-                  <img src={reading.imageUrl} alt="Thumb" className="w-12 h-12 object-cover rounded-lg border border-gray-200" />
+                  <div 
+                    onClick={() => setPreviewImage({ 
+                      url: reading.imageUrl, 
+                      title: reading.panelName, 
+                      subtitle: `${new Date(reading.timestamp).toLocaleString()} • Operator: ${reading.operatorName} (${reading.shift} Shift)` 
+                    })}
+                    className="relative group cursor-pointer w-12 h-12 rounded-lg overflow-hidden border border-gray-200 shadow-sm hover:ring-2 hover:ring-blue-500 transition-all flex items-center justify-center bg-gray-100 flex-shrink-0"
+                    title="Click to preview image"
+                  >
+                    <img src={reading.imageUrl} alt="Thumb" className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-200" />
+                    <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center text-white transition-opacity">
+                      <Eye size={16} />
+                    </div>
+                  </div>
                 </td>
                 <td className="px-6 py-4">
                   <div className="font-bold text-gray-900">{reading.panelName}</div>
@@ -622,7 +637,18 @@ const WebDashboard: React.FC<Props> = ({
                   <div className="text-xs text-gray-500">By {reading.operatorName} ({reading.shift})</div>
                 </td>
                 <td className="px-6 py-4">
-                  <span className="px-2 py-1 bg-red-100 text-red-700 text-xs font-bold rounded-full">REJECTED</span>
+                  <span className="px-2.5 py-1 bg-red-100 text-red-700 text-xs font-bold rounded-full">REJECTED</span>
+                </td>
+                <td className="px-6 py-4">
+                  <div className="text-gray-700 text-xs max-w-xs break-words" title={reading.notes || '-'}>
+                    {reading.notes ? (
+                      <span className="bg-amber-50 text-amber-800 border border-amber-200 px-2 py-1 rounded font-medium inline-block">
+                        {reading.notes}
+                      </span>
+                    ) : (
+                      <span className="text-gray-400 italic">No notes</span>
+                    )}
+                  </div>
                 </td>
                 <td className="px-6 py-4 text-right">
                   <button
@@ -644,7 +670,7 @@ const WebDashboard: React.FC<Props> = ({
             ))}
             {rejectedReadings.length === 0 && (
               <tr>
-                <td colSpan={5} className="px-6 py-12 text-center text-gray-400">
+                <td colSpan={6} className="px-6 py-12 text-center text-gray-400">
                   No rejected items.
                 </td>
               </tr>
@@ -1271,6 +1297,41 @@ const WebDashboard: React.FC<Props> = ({
                 <button onClick={() => setIsPanelModalOpen(false)} className="flex-1 py-2 text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
                 <button onClick={handlePanelSubmit} className="flex-1 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Save</button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Image Preview Lightbox Modal */}
+      {previewImage && (
+        <div 
+          className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in duration-150"
+          onClick={() => setPreviewImage(null)}
+        >
+          <div 
+            className="bg-slate-900 rounded-2xl shadow-2xl overflow-hidden max-w-4xl max-h-[90vh] flex flex-col border border-slate-700 animate-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-900 text-white">
+              <div>
+                <h3 className="font-bold text-lg text-white">{previewImage.title || 'Image Preview'}</h3>
+                {previewImage.subtitle && (
+                  <p className="text-xs text-slate-400 mt-0.5">{previewImage.subtitle}</p>
+                )}
+              </div>
+              <button
+                onClick={() => setPreviewImage(null)}
+                className="text-slate-400 hover:text-white hover:bg-slate-800 p-2 rounded-lg transition-colors"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-4 bg-black flex items-center justify-center overflow-auto max-h-[75vh]">
+              <img 
+                src={previewImage.url} 
+                alt="Preview" 
+                className="max-w-full max-h-[70vh] object-contain rounded-lg shadow-md"
+              />
             </div>
           </div>
         </div>
