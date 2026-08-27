@@ -10,3 +10,6 @@ paddlepaddle
 python-bidi
 pypdfium2
 openpyxl
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.9
+
