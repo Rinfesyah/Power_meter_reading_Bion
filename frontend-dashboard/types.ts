@@ -79,3 +79,30 @@ export function normalizeParameter(param: any): PanelParameterDef {
   }
   return param as PanelParameterDef;
 }
+
+// ─── Auth & RBAC Types ─────────────────────────────────────────────────────────
+
+export type UserRole = 'Admin' | 'Supervisor' | 'Engineer';
+
+export interface AuthUser {
+  id: string;
+  username: string;
+  fullName: string;
+  role: UserRole;
+}
+
+export interface UserRecord extends AuthUser {
+  isActive: boolean;
+  createdAt: string;
+}
+
+/** Permissions matrix per role */
+export const ROLE_PERMISSIONS: Record<UserRole, string[]> = {
+  Admin: ['dashboard', 'verification', 'panels', 'reports', 'rejected', 'settings', 'users'],
+  Supervisor: ['dashboard', 'verification', 'panels', 'reports', 'rejected'],
+  Engineer: ['dashboard', 'reports', 'verification', 'rejected'],
+};
+
+export function hasPermission(role: UserRole, tab: string): boolean {
+  return ROLE_PERMISSIONS[role]?.includes(tab) ?? false;
+}

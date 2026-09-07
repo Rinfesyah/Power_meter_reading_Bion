@@ -1,18 +1,22 @@
 import React, { useState, useRef } from 'react';
-import { InstrumentReading, Panel, ReadingStatus, Shift, PanelParameterDef, VerifiedReading, normalizeParameter } from '../types';
+import { InstrumentReading, Panel, ReadingStatus, Shift, PanelParameterDef, VerifiedReading, normalizeParameter, AuthUser, UserRole, hasPermission } from '../types';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar
 } from 'recharts';
 import {
   Activity, Download, Search, Thermometer, Zap, CheckSquare, Trash2, Plus, Edit2,
   LayoutDashboard, Settings, FileSpreadsheet, Filter, Printer, XCircle, RotateCcw,
-  Link, Save, Database, Server, Loader2, CheckCircle, AlertCircle, Clock, Upload, Cpu, X
+  Link, Save, Database, Server, Loader2, CheckCircle, AlertCircle, Clock, Upload, Cpu, X,
+  Users, LogOut, ShieldCheck
 } from 'lucide-react';
+import UserManagement from './UserManagement';
 
 interface Props {
   readings: InstrumentReading[];
   panels: Panel[];
   googleSheetUrl: string;
+  currentUser: AuthUser;
+  onLogout: () => void;
   onUpdateGoogleSheetUrl: (url: string) => void;
   onUpdateReading: (reading: InstrumentReading) => void;
   onDeleteReading: (id: string) => void;
@@ -22,7 +26,14 @@ interface Props {
   onRefreshReadings: () => Promise<void>;
 }
 
-type Tab = 'dashboard' | 'verification' | 'panels' | 'reports' | 'rejected' | 'settings';
+type Tab = 'dashboard' | 'verification' | 'panels' | 'reports' | 'rejected' | 'settings' | 'users';
+
+/** Role badge colors */
+const ROLE_BADGE: Record<UserRole, { bg: string; text: string; label: string }> = {
+  Admin:      { bg: '#dc2626', text: '#fff', label: 'Admin' },
+  Supervisor: { bg: '#d97706', text: '#fff', label: 'Supervisor' },
+  Engineer:   { bg: '#2563eb', text: '#fff', label: 'Engineer' },
+};
 
 /** Preset parameters for quick-add */
 const PRESET_PARAMS: PanelParameterDef[] = [
@@ -37,7 +48,7 @@ const PRESET_PARAMS: PanelParameterDef[] = [
 ];
 
 const WebDashboard: React.FC<Props> = ({
-  readings, panels, googleSheetUrl, onUpdateGoogleSheetUrl, onUpdateReading, onDeleteReading, onAddPanel, onUpdatePanel, onDeletePanel, onRefreshReadings
+  readings, panels, googleSheetUrl, currentUser, onLogout, onUpdateGoogleSheetUrl, onUpdateReading, onDeleteReading, onAddPanel, onUpdatePanel, onDeletePanel, onRefreshReadings
 }) => {
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
   const [editingReading, setEditingReading] = useState<InstrumentReading | null>(null);
@@ -940,17 +951,59 @@ const WebDashboard: React.FC<Props> = ({
       {/* Sidebar */}
       <aside className="w-64 bg-slate-900 text-white flex-shrink-0 hidden md:flex flex-col">
         <div className="p-6">
-          <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
+          <h1 className="text-xl font-bold tracking-tight leading-tight">Power Meter</h1>
+          <p className="text-slate-400 text-xs mt-1">Monitoring Dashboard</p>
         </div>
-        <nav className="flex-1 px-4 space-y-2">
-          <NavItem active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} icon={<LayoutDashboard size={20} />} label="Overview" />
-          <NavItem active={activeTab === 'reports'} onClick={() => setActiveTab('reports')} icon={<FileSpreadsheet size={20} />} label="Shift Reports" />
-          <NavItem active={activeTab === 'verification'} onClick={() => setActiveTab('verification')} icon={<CheckSquare size={20} />} label="Verification" badge={pendingReadings.length} />
-          <NavItem active={activeTab === 'rejected'} onClick={() => setActiveTab('rejected')} icon={<XCircle size={20} />} label="Rejected" badge={rejectedReadings.length > 0 ? rejectedReadings.length : undefined} />
-          <NavItem active={activeTab === 'panels'} onClick={() => setActiveTab('panels')} icon={<Server size={20} />} label="Panels" />
+        <nav className="flex-1 px-4 space-y-1">
+          {hasPermission(currentUser.role, 'dashboard') && (
+            <NavItem active={activeTab === 'dashboard'} onClick={() => setActiveTab('dashboard')} icon={<LayoutDashboard size={20} />} label="Overview" />
+          )}
+          {hasPermission(currentUser.role, 'reports') && (
+            <NavItem active={activeTab === 'reports'} onClick={() => setActiveTab('reports')} icon={<FileSpreadsheet size={20} />} label="Shift Reports" />
+          )}
+          {hasPermission(currentUser.role, 'verification') && (
+            <NavItem active={activeTab === 'verification'} onClick={() => setActiveTab('verification')} icon={<CheckSquare size={20} />} label="Verification" badge={pendingReadings.length} />
+          )}
+          {hasPermission(currentUser.role, 'rejected') && (
+            <NavItem active={activeTab === 'rejected'} onClick={() => setActiveTab('rejected')} icon={<XCircle size={20} />} label="Rejected" badge={rejectedReadings.length > 0 ? rejectedReadings.length : undefined} />
+          )}
+          {hasPermission(currentUser.role, 'panels') && (
+            <NavItem active={activeTab === 'panels'} onClick={() => setActiveTab('panels')} icon={<Server size={20} />} label="Panels" />
+          )}
+          {hasPermission(currentUser.role, 'users') && (
+            <NavItem active={activeTab === 'users'} onClick={() => setActiveTab('users')} icon={<Users size={20} />} label="User Management" />
+          )}
         </nav>
-        <div className="p-4 border-t border-slate-800">
-          <NavItem active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} icon={<Settings size={20} />} label="Settings" />
+        {/* Settings + User Info + Logout */}
+        <div className="p-4 border-t border-slate-800 space-y-2">
+          {hasPermission(currentUser.role, 'settings') && (
+            <NavItem active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} icon={<Settings size={20} />} label="Settings" />
+          )}
+          {/* User badge */}
+          <div className="px-3 py-3 rounded-lg bg-slate-800 mt-2">
+            <div className="flex items-center gap-2 mb-2">
+              <ShieldCheck size={15} className="text-slate-400" />
+              <span
+                style={{
+                  fontSize: 11, fontWeight: 600, letterSpacing: '0.5px',
+                  padding: '2px 8px', borderRadius: 20,
+                  background: ROLE_BADGE[currentUser.role]?.bg || '#475569',
+                  color: ROLE_BADGE[currentUser.role]?.text || '#fff',
+                }}
+              >
+                {ROLE_BADGE[currentUser.role]?.label || currentUser.role}
+              </span>
+            </div>
+            <p className="text-slate-200 text-sm font-medium truncate">{currentUser.fullName}</p>
+            <p className="text-slate-500 text-xs truncate">{currentUser.username}</p>
+          </div>
+          <button
+            onClick={onLogout}
+            className="w-full flex items-center gap-2 px-3 py-2.5 text-slate-400 hover:text-red-400 hover:bg-slate-800 rounded-lg transition-colors text-sm font-medium"
+          >
+            <LogOut size={16} />
+            Logout
+          </button>
         </div>
       </aside>
 
@@ -963,6 +1016,7 @@ const WebDashboard: React.FC<Props> = ({
           {activeTab === 'rejected' && renderRejected()}
           {activeTab === 'panels' && renderPanels()}
           {activeTab === 'settings' && renderSettings()}
+          {activeTab === 'users' && <UserManagement />}
         </div>
       </main>
 

@@ -74,3 +74,14 @@ export function normalizeParameter(param: any): PanelParameterDef {
   }
   return param as PanelParameterDef;
 }
+
+// ─── Auth Types ───────────────────────────────────────────────────────────────
+
+export type UserRole = 'Admin' | 'Supervisor' | 'Engineer';
+
+export interface AuthUser {
+  id: string;
+  username: string;
+  fullName: string;
+  role: UserRole;
+}

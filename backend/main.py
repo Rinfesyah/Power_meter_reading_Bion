@@ -6,7 +6,7 @@ def _flush_print(*args, **kwargs):
     return _builtin_print(*args, **kwargs)
 builtins.print = _flush_print
 
-from fastapi import FastAPI, UploadFile, File, Form, Request
+from fastapi import FastAPI, UploadFile, File, Form, Request, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import uvicorn
@@ -19,9 +19,15 @@ import csv
 import threading
 import queue
 import time
+import uuid
 from typing import List, Optional, Any
 from pydantic import BaseModel, ConfigDict
 from ocr_engine import process_image, learn_correction
+from auth import (
+    hash_password, verify_password, create_access_token,
+    get_current_user, require_admin, require_admin_or_supervisor
+)
+from users_db import read_users, write_users, find_user_by_username, find_user_by_id, seed_default_admin
 
 class PanelModel(BaseModel):
     model_config = ConfigDict(extra='allow')
@@ -51,7 +57,33 @@ class LearnRequest(BaseModel):
     readings: dict
     raw_text: List[str]
 
+# ─── Auth / User Pydantic Models ──────────────────────────────────────────────
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+class CreateUserRequest(BaseModel):
+    username: str
+    fullName: str
+    password: str
+    role: str  # 'Admin' | 'Supervisor' | 'Engineer'
+    isActive: bool = True
+
+class UpdateUserRequest(BaseModel):
+    fullName: Optional[str] = None
+    password: Optional[str] = None
+    role: Optional[str] = None
+    isActive: Optional[bool] = None
+
+# ─── Rate Limiting (simple in-memory, per-IP) ─────────────────────────────────
+# Dict: { ip: { 'count': int, 'reset_at': float } }
+_login_attempts: dict = {}
+
 app = FastAPI(title="DC-Ops OCR Backend")
+
+# Seed default admin on startup
+seed_default_admin()
 
 # CORS
 app.add_middleware(
@@ -163,6 +195,143 @@ def read_readings():
 
 def write_readings(readings_list):
     with open(READINGS_DB_PATH, 'w') as f: json.dump(readings_list, f, indent=2)
+
+# ====== AUTH ENDPOINTS ======
+
+@app.post("/api/auth/login")
+def login(req: LoginRequest, request: Request):
+    """Authenticate user and return JWT token."""
+    ip = request.client.host if request.client else "unknown"
+    now = time.time()
+
+    # Rate limiting: 5 attempts per 5 minutes per IP
+    entry = _login_attempts.get(ip)
+    if entry:
+        if now < entry['reset_at']:
+            if entry['count'] >= 5:
+                wait = int(entry['reset_at'] - now)
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail=f"Too many login attempts. Try again in {wait} seconds."
+                )
+        else:
+            _login_attempts.pop(ip, None)
+
+    user = find_user_by_username(req.username)
+    # Generic error — never reveal whether username or password is wrong
+    if not user or not verify_password(req.password, user.get("password_hash", "")):
+        rec = _login_attempts.setdefault(ip, {'count': 0, 'reset_at': now + 300})
+        rec['count'] += 1
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Kredensial tidak valid. Periksa kembali username dan password."
+        )
+
+    if not user.get("isActive", True):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Akun dinonaktifkan. Hubungi administrator."
+        )
+
+    # Clear failed attempts on success
+    _login_attempts.pop(ip, None)
+
+    token = create_access_token(
+        user_id=user["id"],
+        username=user["username"],
+        role=user["role"],
+        full_name=user["fullName"]
+    )
+    return {
+        "access_token": token,
+        "token_type": "bearer",
+        "user": {
+            "id": user["id"],
+            "username": user["username"],
+            "fullName": user["fullName"],
+            "role": user["role"],
+        }
+    }
+
+
+@app.get("/api/auth/me")
+def get_me(current_user: dict = Depends(get_current_user)):
+    """Return current authenticated user info."""
+    return current_user
+
+
+# ====== USER MANAGEMENT (Admin only) ======
+
+@app.get("/api/users")
+def list_users(current_user: dict = Depends(require_admin)):
+    """List all users (Admin only). Excludes password hashes."""
+    users = read_users()
+    return [
+        {k: v for k, v in u.items() if k != "password_hash"}
+        for u in users
+    ]
+
+
+@app.post("/api/users", status_code=201)
+def create_user(req: CreateUserRequest, current_user: dict = Depends(require_admin)):
+    """Create a new user account (Admin only)."""
+    if req.role not in ("Admin", "Supervisor", "Engineer"):
+        raise HTTPException(status_code=400, detail="Role tidak valid. Gunakan: Admin, Supervisor, atau Engineer.")
+    if find_user_by_username(req.username):
+        raise HTTPException(status_code=409, detail="Username sudah digunakan.")
+    users = read_users()
+    new_user = {
+        "id": str(uuid.uuid4()),
+        "username": req.username,
+        "fullName": req.fullName,
+        "password_hash": hash_password(req.password),
+        "role": req.role,
+        "isActive": req.isActive,
+        "createdAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    }
+    users.append(new_user)
+    write_users(users)
+    return {k: v for k, v in new_user.items() if k != "password_hash"}
+
+
+@app.put("/api/users/{user_id}")
+def update_user(user_id: str, req: UpdateUserRequest, current_user: dict = Depends(require_admin)):
+    """Update user info/role/password (Admin only)."""
+    users = read_users()
+    updated = False
+    for u in users:
+        if u["id"] == user_id:
+            if req.fullName is not None:
+                u["fullName"] = req.fullName
+            if req.role is not None:
+                if req.role not in ("Admin", "Supervisor", "Engineer"):
+                    raise HTTPException(status_code=400, detail="Role tidak valid.")
+                u["role"] = req.role
+            if req.isActive is not None:
+                u["isActive"] = req.isActive
+            if req.password is not None and req.password.strip() != "":
+                u["password_hash"] = hash_password(req.password)
+            updated = True
+            break
+    if not updated:
+        raise HTTPException(status_code=404, detail="User tidak ditemukan.")
+    write_users(users)
+    updated_user = find_user_by_id(user_id)
+    return {k: v for k, v in updated_user.items() if k != "password_hash"}
+
+
+@app.delete("/api/users/{user_id}")
+def delete_user(user_id: str, current_user: dict = Depends(require_admin)):
+    """Delete a user account (Admin only). Cannot delete yourself."""
+    if user_id == current_user.get("id"):
+        raise HTTPException(status_code=400, detail="Tidak dapat menghapus akun Anda sendiri.")
+    users = read_users()
+    new_users = [u for u in users if u["id"] != user_id]
+    if len(new_users) == len(users):
+        raise HTTPException(status_code=404, detail="User tidak ditemukan.")
+    write_users(new_users)
+    return {"status": "ok", "message": "User berhasil dihapus."}
+
 
 # ====== API ENDPOINTS ======
 
@@ -306,7 +475,7 @@ def learn_endpoint(req: LearnRequest):
 # ====== MODEL MANAGEMENT ======
 
 @app.post("/api/models/upload/yolo-text")
-async def upload_yolo_text(file: UploadFile = File(...)):
+async def upload_yolo_text(file: UploadFile = File(...), current_user: dict = Depends(require_admin)):
     if not file.filename.endswith(".pt"):
         return {"status": "error", "message": "Only .pt files allowed"}
     path = os.path.join(MODELS_DIR, "yolo_text_detect.pt")
@@ -315,7 +484,7 @@ async def upload_yolo_text(file: UploadFile = File(...)):
     return {"status": "success", "message": "YOLO Text model uploaded"}
 
 @app.post("/api/models/upload/yolo-device")
-async def upload_yolo_device(file: UploadFile = File(...)):
+async def upload_yolo_device(file: UploadFile = File(...), current_user: dict = Depends(require_admin)):
     if not file.filename.endswith(".pt"):
         return {"status": "error", "message": "Only .pt files allowed"}
     path = os.path.join(MODELS_DIR, "yolo_device_detect.pt")
@@ -324,7 +493,7 @@ async def upload_yolo_device(file: UploadFile = File(...)):
     return {"status": "success", "message": "YOLO Device model uploaded"}
 
 @app.post("/api/models/upload/tesseract")
-async def upload_tesseract(file: UploadFile = File(...)):
+async def upload_tesseract(file: UploadFile = File(...), current_user: dict = Depends(require_admin)):
     if not file.filename.endswith(".traineddata"):
         return {"status": "error", "message": "Only .traineddata files allowed"}
     path = os.path.join(TESSDATA_DIR, "eng.traineddata")
@@ -333,7 +502,7 @@ async def upload_tesseract(file: UploadFile = File(...)):
     return {"status": "success", "message": "Tesseract model uploaded"}
 
 @app.post("/api/models/upload/paddleocr")
-async def upload_paddleocr(file: UploadFile = File(...)):
+async def upload_paddleocr(file: UploadFile = File(...), current_user: dict = Depends(require_admin)):
     if not file.filename.endswith(".zip"):
         return {"status": "error", "message": "Only .zip files allowed"}
     zip_path = os.path.join(MODELS_DIR, "power_meter_rec_inference.zip")

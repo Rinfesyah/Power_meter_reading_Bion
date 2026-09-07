@@ -7,6 +7,7 @@ interface Props {
   panels: Panel[];
   readings: InstrumentReading[];
   onSave: (reading: InstrumentReading) => void;
+  defaultOperatorName?: string; // Auto-filled from logged-in user
 }
 
 interface OperatorSession {
@@ -21,10 +22,10 @@ const SHIFT_OPTIONS: { value: Shift; label: string }[] = [
   { value: '3', label: 'Shift 3' },
 ];
 
-const MobileOperatorView: React.FC<Props> = ({ panels, readings, onSave }) => {
+const MobileOperatorView: React.FC<Props> = ({ panels, readings, onSave, defaultOperatorName }) => {
   // Session State
   const [session, setSession] = useState<OperatorSession | null>(null);
-  const [tempName, setTempName] = useState('');
+  const [tempName, setTempName] = useState(defaultOperatorName || '');
   const [tempShift, setTempShift] = useState<Shift>('1');
   const [tempHour, setTempHour] = useState(() => {
     const now = new Date();

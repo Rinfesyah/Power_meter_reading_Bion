@@ -10,3 +10,5 @@ paddlepaddle
 python-bidi
 pypdfium2
 openpyxl
+python-jose[cryptography]
+passlib[bcrypt]
