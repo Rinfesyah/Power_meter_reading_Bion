@@ -4,7 +4,7 @@ services:
   postgres:
     image: postgres:16-alpine
     container_name: dc_ops_postgres
-    restart: always
+    restart: "no"
     environment:
       POSTGRES_DB: power_meter_db
       POSTGRES_USER: postgres
