@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { InstrumentReading, Panel } from "./types";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import LoginPage from "./components/LoginPage";
@@ -25,13 +25,23 @@ const AppContent: React.FC = () => {
   });
 
   // Load panels from backend
+  const loadPanels = useCallback(async () => {
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/panels`);
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        setPanels(data);
+      }
+    } catch (err) {
+      console.error("Failed to load panels:", err);
+    }
+  }, []);
+
   useEffect(() => {
-    if (!isAuthenticated) return;
-    fetch(`${BACKEND_URL}/api/panels`)
-      .then(res => res.json())
-      .then(data => { if (Array.isArray(data)) setPanels(data); })
-      .catch(err => console.error("Failed to load panels:", err));
-  }, [isAuthenticated]);
+    if (isAuthenticated) {
+      loadPanels();
+    }
+  }, [isAuthenticated, loadPanels]);
 
   // Load readings from backend
   const loadReadings = useCallback(async () => {
@@ -44,9 +54,52 @@ const AppContent: React.FC = () => {
     }
   }, []);
 
+  // Initial load + Real-time Server-Sent Events (SSE) Listener
   useEffect(() => {
-    if (isAuthenticated) loadReadings();
-  }, [isAuthenticated, loadReadings]);
+    if (!isAuthenticated) return;
+
+    loadReadings();
+
+    // Setup SSE connection
+    let eventSource: EventSource | null = null;
+    try {
+      eventSource = new EventSource(`${BACKEND_URL}/api/events`);
+
+      eventSource.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          if (['READING_CREATED', 'READING_UPDATED', 'READING_DELETED'].includes(payload.type)) {
+            loadReadings();
+          } else if (payload.type === 'PANELS_UPDATED') {
+            loadPanels();
+          }
+        } catch (e) {
+          // Heartbeat or raw message
+        }
+      };
+
+      eventSource.onerror = () => {
+        // Browser automatically reconnects EventSource
+      };
+    } catch (e) {
+      console.warn("SSE not supported or connection error, falling back to window focus sync:", e);
+    }
+
+    // Gentle sync when user focuses the tab
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        loadReadings();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      if (eventSource) {
+        eventSource.close();
+      }
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [isAuthenticated, loadReadings, loadPanels]);
 
   // Persist sheet URL
   useEffect(() => {

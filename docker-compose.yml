@@ -1,12 +1,30 @@
 version: '3.8'
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: dc_ops_postgres
+    restart: "no"
+    environment:
+      POSTGRES_DB: power_meter_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
     ports:
       - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres123@postgres:5432/power_meter_db
+    depends_on:
+      - postgres
     volumes:
       # Sinkronisasi kode backend untuk mempermudah pengembangan (live reload)
       - ./backend:/app
@@ -26,7 +44,6 @@ services:
       # Menghindari node_modules container tertimpa oleh folder lokal Windows
       - /app/node_modules
 
-
   frontend-mobile:
     build:
       context: ./frontend-mobile
@@ -38,3 +55,7 @@ services:
       - ./frontend-mobile:/app
       # Menghindari node_modules container tertimpa oleh folder lokal Windows
       - /app/node_modules
+
+volumes:
+  postgres_data:
+

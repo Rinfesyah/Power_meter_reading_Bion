@@ -1,81 +1,105 @@
-# 🚀 DC-Ops OCR System
+# ⚡ DC-Ops Power Meter Reading System (AI-Powered OCR)
 
-**Data Center Operational Reporting System with AI-Powered OCR Automation.**
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.100%2B-009688.svg?style=flat&logo=fastapi)](https://fastapi.tiangolo.com)
+[![React](https://img.shields.io/badge/React-18-61DAFB.svg?style=flat&logo=react)](https://reactjs.org/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-336791.svg?style=flat&logo=postgresql)](https://www.postgresql.org/)
+[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED.svg?style=flat&logo=docker)](https://www.docker.com/)
 
-Sistem ini didesain khusus untuk mengotomatiskan perekaman data dan pelaporan harian instrumen panel listrik (seperti Schneider PowerLogic) dan fasilitas infrastruktur data center lainnya menggunakan teknologi **Object Detection (YOLO)** dan **Optical Character Recognition (Tesseract OCR)**.
+Sistem otomatisasi pencatatan dan pelaporan data operasional instrumen panel listrik (seperti *Schneider PowerLogic PM5350*, *digital/analog power meter*) untuk fasilitas infrastruktur Data Center. 
 
-Sistem terdiri dari tiga bagian utama:
-1.  **Backend (FastAPI)**: API Server & AI OCR Engine utama (Port `8000`).
-2.  **Frontend Mobile (React + Vite)**: Aplikasi mobile-web khusus untuk Operator lapangan melakukan input data dan mengambil foto panel (Port `3001`).
-3.  **Frontend Dashboard (React + Vite)**: Web Dashboard premium khusus untuk Manager melakukan verifikasi, penyuntingan data, ekspor Sheets, dan manajemen panel (Port `3000`).
+Sistem ini mentransformasikan alur kerja inspeksi fisik manual menjadi digital secara instan menggunakan pipeline **Computer Vision (OpenCV + YOLOv8)** dan **Optical Character Recognition (Tesseract OCR)** dengan sinkronisasi *real-time* via **Server-Sent Events (SSE)**.
 
 ---
 
-## 📂 Struktur Utama Proyek
+## 🌟 Fitur Utama
+
+*   **📱 Mobile-First Field App (Port 3001):** Antarmuka web responsif ramah smartphone dengan akses kamera langsung untuk pengambilan foto display panel di lapangan tanpa repot.
+*   **💻 Manager Web Dashboard (Port 3000):** Dashboard pemantauan analitik *real-time*, validasi & verifikasi pembacaan OCR berdampingan dengan foto asli, manajemen instrumen panel (CRUD), serta ekspor data ke Excel/Google Sheets.
+*   **🧠 Intelligent OCR Pipeline:** 
+    *   *Auto-crop LCD* menggunakan model YOLOv8 atau deteksi kontur OpenCV.
+    *   *Auto-deskewing* rotasi kemiringan foto berbasis transformasi garis Hough.
+    *   Peningkatan kontras adaptif CLAHE & binarisasi Otsu untuk display 7-segment.
+    *   *Adaptive Self-Correction Memory*: Sistem mempelajari riwayat koreksi manual dari manajer untuk meningkatkan akurasi pembacaan selanjutnya secara mandiri.
+*   **🔄 Real-Time Event Streaming (SSE):** Setiap foto baru yang diunggah dari lapangan akan langsung muncul dan ter-update di dashboard manajer tanpa perlu me-refresh halaman.
+*   **💾 Dual-Persistence Reliability:** Berjalan di atas **PostgreSQL 16** untuk kebutuhan relasional skala penuh, dengan kemampuan *automatic graceful fallback* ke penyimpanan JSON lokal jika database offline.
+
+---
+
+## 📂 Struktur Repositori
 
 ```text
-dc-ops-ocr/
+Power_meter_reading_Bion/
 ├── backend/               # FastAPI Backend Service & OCR AI Pipeline
-│   ├── main.py            # Entry point FastAPI & Queue manager
-│   ├── ocr_engine.py      # Core OCR Pipeline (YOLO + OpenCV + Tesseract)
-│   ├── requirements.txt   # Python dependency list
-│   └── models/            # Tempat menyimpan model YOLO (.pt) dan Tesseract (.traineddata)
-├── frontend-mobile/       # React + Vite App untuk Operator lapangan (Port 3001)
-├── frontend-dashboard/    # React + Vite App untuk Web Dashboard Manager (Port 3000)
-├── README.md              # Ringkasan cepat & cara menjalankan sistem
-└── PANDUAN.md             # Panduan lengkap arsitektur, AI, & pemecahan masalah (Bahasa Indonesia)
+│   ├── main.py            # Entry point REST API, SSE broadcaster & worker queue
+│   ├── ocr_engine.py      # Pipeline OpenCV, YOLO, Tesseract, & Self-Learning Memory
+│   ├── models_db.py       # SQLAlchemy ORM models (master_equipments, log_headers, dll)
+│   ├── crud.py            # Operasi transaksi database
+│   ├── database.py        # Koneksi database & session manager
+│   ├── requirements.txt   # Dependensi Python
+│   └── models/            # Bobot model YOLOv8 (.pt) dan data latih
+├── frontend-mobile/       # Aplikasi web operator lapangan (React + TypeScript + Vite)
+├── frontend-dashboard/    # Dashboard analitik & verifikasi manager (React + TypeScript + Vite)
+├── database/              # Skema database & data lokal
+│   ├── init.sql           # Skema inisialisasi tabel PostgreSQL
+│   ├── panels.json        # Data panel (fallback)
+│   ├── readings.json      # Data log pembacaan (fallback)
+│   └── memory.json        # Memori koreksi mandiri AI
+├── docker-compose.yml     # Konfigurasi orkestrasi kontainer Docker
+├── start_backend.bat      # Launcher 1-klik backend Windows (.venv auto-setup)
+├── ARSITEKTUR.md          # 🏛️ Dokumentasi teknis & arsitektur mendalam
+└── PANDUAN.md             # 📘 Panduan instalasi, operasional, & pemecahan masalah
 ```
-
-Untuk detail arsitektur lengkap, silakan merujuk ke **[PANDUAN.md](file:///d:/Program/Workplace%20pertama/dc-ops-ocr/PANDUAN.md)**.
 
 ---
 
-## ⚡ Cara Cepat Menjalankan Aplikasi
+## ⚡ Cara Cepat Menjalankan Sistem
 
-Pastikan Anda memiliki **Node.js LTS**, **Python 3.8 - 3.11**, dan **Tesseract OCR** terpasang di komputer Anda.
+### Opsi 1: Menjalankan Secara Native di Windows (Disarankan untuk Dev)
 
-### 1. Jalankan Backend (FastAPI - Port 8000)
-Buka terminal baru, jalankan perintah berikut:
-```bash
-cd backend
-pip install -r requirements.txt
-python main.py
-```
-*API Server berjalan di `http://localhost:8000`.*
+Pastikan **Python 3.9 - 3.11**, **Node.js LTS (18+)**, dan **Tesseract OCR** telah terpasang.
 
-### 2. Jalankan Frontend Mobile (Operator - Port 3001)
-Buka terminal baru kedua, jalankan perintah berikut:
-```bash
-cd frontend-mobile
-npm install
-npm run dev
-```
-*Aplikasi operator berjalan di `http://localhost:3001`.*
+1. **Jalankan Backend (Port 8000):**
+   Cukup klik dua kali berkas [`start_backend.bat`](file:///d:/Program/Power_meter_reading_Bion/start_backend.bat).  
+   *(Skrip akan otomatis membuat `.venv`, menginstal dependensi, dan menjalankan server FastAPI).*
 
-### 3. Jalankan Frontend Dashboard (Manager - Port 3000)
-Buka terminal baru ketiga, jalankan perintah berikut:
-```bash
-cd frontend-dashboard
-npm install
-npm run dev
-```
-*Web Dashboard berjalan di `http://localhost:3000`.*
+2. **Jalankan Frontend Mobile Operator (Port 3001):**
+   ```powershell
+   cd frontend-mobile
+   npm install
+   npm run dev
+   ```
+   *Akses melalui browser di: `http://localhost:3001`*
+
+3. **Jalankan Frontend Dashboard Manager (Port 3000):**
+   ```powershell
+   cd frontend-dashboard
+   npm install
+   npm run dev
+   ```
+   *Akses melalui browser di: `http://localhost:3000`*
 
 ---
 
-## 📘 Dokumentasi Tambahan
+### Opsi 2: Menjalankan dengan Docker Compose (All-in-One + PostgreSQL)
 
-Untuk panduan mendalam tentang:
-*   **Arsitektur Sistem Terperinci** (diagram sequence & alur database).
-*   **Cara kerja AI & Engine OCR** (pencocokan spasial, filter preprocessing OpenCV, dan memory self-learning).
-*   **Prasyarat & Konfigurasi Tesseract OCR di Windows**.
-*   **Panduan Troubleshooting Lengkap** (mengatasi bentrok port jaringan, blank page, atau model error).
+```powershell
+# Jalankan PostgreSQL, Backend, Mobile, dan Dashboard
+docker compose up -d
 
-Buka berkas panduan kami:  
-👉 **[PANDUAN.md (Bahasa Indonesia)](file:///d:/Program/Workplace%20pertama/dc-ops-ocr/PANDUAN.md)**
+# Pantau log backend
+docker compose logs -f backend
+```
 
 ---
 
-## 🛠️ Pemeliharaan & Kontribusi
+## 📚 Dokumentasi Lanjutan
 
-Sistem ini menggunakan **Self-Correction Memory** adaptif. Setiap kali Anda melakukan penyuntingan manual pada Dashboard Manager, kecerdasan buatan akan mempelajari pola kesalahan karakter dan secara dinamis menyimpannya ke database memori (`database/memory.json`) untuk meningkatkan akurasi pembacaan di masa mendatang.
+Untuk informasi teknis yang lebih komprehensif, silakan pelajari dokumen resmi kami:
+
+*   🏛️ **[ARSITEKTUR.md](file:///d:/Program/Power_meter_reading_Bion/ARSITEKTUR.md)**: Diagram arsitektur C4, Entity Relationship Diagram (ERD), alur kerja Computer Vision & OCR, protokol Server-Sent Events (SSE), dan dual persistence.
+*   📘 **[PANDUAN.md](file:///d:/Program/Power_meter_reading_Bion/PANDUAN.md)**: Panduan instalasi langkah demi langkah, SOP operasional teknisi dan manajer, konfigurasi Tesseract OCR di Windows, serta panduan solusi kendala (*troubleshooting*).
+
+---
+
+## 🛡️ Lisensi & Kontribusi
+Proyek ini dikembangkan secara internal untuk optimalisasi operasional infrastruktur Data Center. Seluruh kontribusi dan perubahan wajib mematuhi standar integritas data dan arsitektur yang tertera pada panduan resmi.

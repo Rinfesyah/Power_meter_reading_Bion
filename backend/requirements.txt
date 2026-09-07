@@ -12,3 +12,6 @@ pypdfium2
 openpyxl
 python-jose[cryptography]
 passlib[bcrypt]
+bcrypt
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.9
