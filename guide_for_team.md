@@ -8,16 +8,18 @@ Dokumen ini berisi panduan langkah-demi-langkah bagi **Orang 2 (Frontend Develop
 
 Sebelum memulai, pastikan perangkat lunak berikut sudah terinstal di laptop Anda:
 1.  **Git:** [Unduh & Instal Git](https://git-scm.com/)
-2.  **Docker Desktop:** [Unduh & Instal Docker Desktop](https://www.docker.com/products/docker-desktop/) (Pastikan Docker Desktop sudah aktif/Running sebelum melangkah ke bagian berikutnya).
-3.  **Code Editor:** Gunakan VS Code atau Antigravity IDE.
+2.  **Code Editor:** Gunakan VS Code atau Antigravity IDE.
+3.  **Node.js LTS (18+):** [Unduh Node.js](https://nodejs.org/)
+4.  **Python (3.10 atau 3.11):** [Unduh Python](https://www.python.org/)
+5.  **Tesseract OCR:**
+    - **Windows:** Pasang di lokasi default `C:\Program Files\Tesseract-OCR\tesseract.exe`.
+    - **macOS:** Cukup jalankan di Terminal: `brew install tesseract`
 
 ```NOTE
+Catatan untuk Pengguna macOS (Macbook Apple Silicon M1/M2/M3/M4):
 
-Catatan untuk Pengguna macOS (Macbook):
-
-Tidak memerlukan install Git. Cukup instal Docker Desktop untuk Mac.
-Pilih tipe installer Docker yang sesuai dengan prosesor Mac Anda: Apple Silicon (Chip M1/M2/M3) atau Intel Chip.
-Jalankan semua perintah terminal menggunakan aplikasi Terminal bawaan Mac atau VS Code Terminal.
+Anda dapat menjalankan aplikasi secara Native (tanpa Docker) menggunakan skrip .sh yang telah disediakan.
+Cara ini jauh lebih cepat, hemat baterai, dan langsung memanfaatkan kekuatan prosesor M1 secara optimal tanpa kendala emulasi.
 ```
 
 ---
@@ -41,19 +43,46 @@ git checkout main
 
 ### Langkah 3: Unduh File Model AI YOLO (Hanya Jika Belum Ada)
 Jika folder `backend/models/` di komputer Anda belum berisi file model `.pt`, mintalah file model tersebut kepada ML Engineer melalui Google Drive bersama, lalu letakkan di folder:
-`Power_meter_reading_Bion/dc-ops-ocr/backend/models/`
+`Power_meter_reading_Bion/backend/models/`
 
-### Langkah 4: Bangun & Jalankan Aplikasi
-Jalankan Docker Compose untuk membangun container pertama kali:
+### Langkah 4: Menjalankan Aplikasi
+
+Pilih salah satu metode yang paling sesuai dengan sistem operasi Anda:
+
+#### **Metode 1: Menjalankan di macOS (MacBook M1/M2/M3/M4 - Sangat Direkomendasikan)**
+Buka aplikasi **Terminal** di Mac Anda, arahkan ke folder proyek, lalu beri izin eksekusi (cukup sekali):
+```bash
+chmod +x start_backend.sh start_dashboard.sh start_mobile.sh
+```
+Buka 3 tab Terminal terpisah dan jalankan:
+*   **Tab 1 (Backend API - Port 8000):**
+    ```bash
+    ./start_backend.sh
+    ```
+*   **Tab 2 (Dashboard Manager - Port 3000):**
+    ```bash
+    ./start_dashboard.sh
+    ```
+*   **Tab 3 (Aplikasi Mobile Operator - Port 3001):**
+    ```bash
+    ./start_mobile.sh
+    ```
+
+#### **Metode 2: Menjalankan di Windows**
+Cukup klik dua kali (double-click) ketiga file `.bat` yang tersedia:
+1. `start_backend.bat`
+2. `start_dashboard.bat`
+3. `start_mobile.bat`
+
+#### **Metode 3: Menggunakan Docker Compose (Alternatif)**
 ```powershell
 docker compose up --build
 ```
-Proses ini akan mengunduh image Python, Node.js, menginstal Tesseract OCR, serta library python/NPM lainnya secara otomatis. Setelah selesai, aplikasi dapat diakses di:
+
+Setelah aplikasi berjalan, buka di browser:
 *   **Dashboard Manager:** [http://localhost:3000](http://localhost:3000)
 *   **Aplikasi Mobile Operator:** [http://localhost:3001](http://localhost:3001)
 *   **Backend API Swagger:** [http://localhost:8000/docs](http://localhost:8000/docs)
-
-Untuk mematikan container, tekan `Ctrl + C` di terminal tersebut.
 
 ---
 

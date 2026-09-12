@@ -33,3 +33,7 @@ ENV/
 *.sln
 *.sw?
 
+# Abaikan seluruh isi database kecuali file inisialisasi tabel SQL
+database/*
+!database/init.sql
+
