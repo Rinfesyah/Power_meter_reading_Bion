@@ -10,8 +10,9 @@ Sebelum memulai, pastikan perangkat lunak berikut sudah terinstal di laptop Anda
 1.  **Git:** [Unduh & Instal Git](https://git-scm.com/)
 2.  **Code Editor:** Gunakan VS Code atau Antigravity IDE.
 3.  **Node.js LTS (18+):** [Unduh Node.js](https://nodejs.org/)
-4.  **Python (3.10 atau 3.11):** [Unduh Python](https://www.python.org/)
-5.  **Tesseract OCR:**
+4.  **Python (3.10 atau 3.11):** [Unduh Python](https://www.python.org/)  
+    *(Dependensi backend mencakup `ultralytics` untuk YOLOv8, `paddlex` & `paddlepaddle` untuk PaddleOCR PP-OCRv4, `opencv-contrib-python`, dan `pytesseract`)*.
+5.  **Tesseract OCR (Fallback Engine):**
     - **Windows:** Pasang di lokasi default `C:\Program Files\Tesseract-OCR\tesseract.exe`.
     - **macOS:** Cukup jalankan di Terminal: `brew install tesseract`
 
@@ -41,9 +42,13 @@ Pindah ke branch utama (`main`) yang saat ini aktif digunakan oleh tim:
 git checkout main
 ```
 
-### Langkah 3: Unduh File Model AI YOLO (Hanya Jika Belum Ada)
-Jika folder `backend/models/` di komputer Anda belum berisi file model `.pt`, mintalah file model tersebut kepada ML Engineer melalui Google Drive bersama, lalu letakkan di folder:
-`Power_meter_reading_Bion/backend/models/`
+### Langkah 3: Unduh & Siapkan File Model AI (YOLO & PaddleOCR)
+Backend AI memerlukan model-model berikut di folder `Power_meter_reading_Bion/backend/models/`:
+1. **Model Deteksi YOLO:** `yolo_device_detect.pt` (deteksi LCD display) dan `yolo_text_detect.pt` (deteksi baris angka).
+2. **Model Pengenalan Karakter Utama (PaddleOCR):** Arsip `power_meter_rec_inference.zip` yang diekstrak ke `backend/models/power_meter_rec_inference/PaddleOCR/inference/power_meter_rec`. Model ini menggunakan arsitektur `en_PP-OCRv4_mobile_rec` yang sangat akurat mengenali digit LCD 7-segment / dot matrix.
+3. **Model Fallback Tesseract (Opsional):** Berkas bahasa `tessdata/eng.traineddata`.
+
+> 💡 **Tips Praktis:** Jika file model belum ada di direktori lokal Anda, mintalah file model kepada ML Engineer melalui Google Drive bersama. Selain menaruhnya secara manual, Anda juga dapat mengunggah model langsung lewat antarmuka **Web Dashboard Manager (Port 3000)** pada tab pengaturan model (tersedia tombol upload `.pt`, `.zip` PaddleOCR, dan `.traineddata`).
 
 ### Langkah 4: Menjalankan Aplikasi
 

@@ -1,11 +1,11 @@
 # 📘 Panduan Pengembangan & Pengoperasian: DC Ops OCR System
 
-Selamat datang di panduan teknis operasional **DC Ops OCR System (Power Meter Reading)**. Sistem ini dirancang khusus untuk mendigitalkan dan mengotomatiskan pencatatan parameter panel listrik (seperti Schneider PowerLogic, PM5350, dsb.) dan infrastruktur data center secara cepat, andal, dan akurat menggunakan teknologi Computer Vision & Optical Character Recognition (**OCR**) berbasis AI.
+Selamat datang di panduan teknis operasional **DC Ops OCR System (Power Meter Reading)**. Sistem ini dirancang khusus untuk mendigitalkan dan mengotomatiskan pencatatan parameter panel listrik (seperti Schneider PowerLogic, PM5350, dsb.) dan infrastruktur data center secara cepat, andal, dan akurat menggunakan teknologi Computer Vision & Optical Character Recognition (**OCR**) berbasis AI (YOLOv8 + PaddleOCR PP-OCRv4 Mobile + Tesseract Fallback).
 
 Sistem terdiri dari 3 komponen utama yang terhubung secara *real-time*:
 1.  **Backend Service (Python + FastAPI)**: API server, antrean *background worker*, dan AI OCR Engine (Port `8000`).
 2.  **Frontend Mobile App (React + Vite)**: Aplikasi mobile-web responsif khusus untuk Operator lapangan mengambil foto panel dan memasukkan data shift (Port `3001`).
-3.  **Frontend Dashboard App (React + Vite)**: Web Dashboard analitik untuk Manager melakukan verifikasi, penyuntingan data pembacaan, manajemen panel/parameter, serta ekspor laporan (Port `3000`).
+3.  **Frontend Dashboard App (React + Vite)**: Web Dashboard analitik untuk Manager melakukan verifikasi, penyuntingan data pembacaan, manajemen panel/parameter, upload model AI, serta ekspor laporan (Port `3000`).
 
 Untuk dokumentasi desain teknis dan diagram internal mendalam, silakan baca **[ARSITEKTUR.md](file:///d:/Program/Power_meter_reading_Bion/ARSITEKTUR.md)**.
 
@@ -20,41 +20,48 @@ graph TD
     subgraph Frontend (React + Vite + TypeScript)
       A[Frontend Mobile - Port 3001] -->|1. Upload Foto & Metadata| C(FastAPI Backend - Port 8000)
       B[Frontend Dashboard - Port 3000] -->|4. Verifikasi & Koreksi Readings| C
-      B -->|5. Kelola Master Panel & Ekspor| C
+      B -->|5. Kelola Master Panel & Upload Model| C
       C -.->|Real-Time SSE Updates| B
       C -.->|Real-Time SSE Updates| A
     end
     
-    subgraph Backend & AI Engine (FastAPI + YOLO + Tesseract)
+    subgraph Backend & AI Engine (FastAPI + YOLO + PaddleOCR + Tesseract)
       C -->|Simpan Foto Fisik| FOTO[ Direktori /database/foto/ ]
       C -->|Tulis Transaksi Awal| DB[(PostgreSQL 16 / JSON Fallback)]
       C -->|2. Masukkan Antrean FIFO| E{Worker FIFO Queue}
       E -->|3. Proses OCR Asinkron| F[OCR Engine]
-      F -->|YOLO Device Detect| G[Crop LCD & Deskewing]
-      G -->|OpenCV CLAHE & Otsu| H[Filter Binarisasi]
-      H -->|Tesseract Engine| I[Ekstraksi Angka]
-      I -->|Pencocokan Spasial| J[Smart Matcher]
+      F -->|YOLO Device Detect| G[Crop LCD & Deskewing Hough]
+      G -->|YOLO Text Detect| H[Deteksi Bounding Box Teks]
+      H -->|PaddleOCR PP-OCRv4| I1[Ekstraksi Angka/Teks Utama]
+      H -.->|Fallback jika Kosong| I2[Tesseract OCR 6-Step]
+      I1 -->|Hasil Pembacaan| J[Smart Spatial & Memory Matcher]
+      I2 -->|Hasil Pembacaan| J
       J -->|Update Status COMPLETED| DB
       J -->|Koreksi Adaptif| MEM[(memory.json)]
     end
 ```
 
 ### 📁 Struktur Folder Proyek
-*   `📁 backend/`: Layanan API berbasis **FastAPI (Python)**. Mengelola antrean pemrosesan foto latar belakang, pipeline OCR (OpenCV + YOLO + Tesseract), endpoint CRUD, dan streaming SSE.
-    *   `main.py`: Entry point server FastAPI, routing HTTP, dan antrean worker thread.
-    *   `ocr_engine.py`: Pipeline ekstraksi gambar, rotasi (deskew), deteksi binarisasi, dan Tesseract OCR.
+*   `📁 backend/`: Layanan API berbasis **FastAPI (Python)**. Mengelola antrean pemrosesan foto latar belakang, pipeline AI (OpenCV + YOLOv8 + PaddleOCR + Tesseract), endpoint CRUD, dan streaming SSE.
+    *   `main.py`: Entry point server FastAPI, routing HTTP, upload model AI (`/api/models/upload/...`), dan antrean worker thread.
+    *   `ocr_engine.py`: Pipeline ekstraksi gambar, deskewing, deteksi box teks YOLO, inferensi PaddleOCR PP-OCRv4, fallback Tesseract, dan spatial matching.
+    *   `models/`: Berkas model kecerdasan buatan:
+        *   `yolo_device_detect.pt`: Model YOLOv8 untuk deteksi display meteran.
+        *   `yolo_text_detect.pt`: Model YOLOv8 untuk deteksi kotak baris angka/teks.
+        *   `power_meter_rec_inference/`: Model inferensi PaddleOCR (`en_PP-OCRv4_mobile_rec`).
+        *   `tessdata/`: Berkas bahasa Tesseract kustom (`eng.traineddata`).
     *   `database.py`: Konfigurasi engine database SQLAlchemy dan koneksi PostgreSQL.
     *   `models_db.py`: Model ORM tabel relasional (`master_equipments`, `log_headers`, `log_details`, dll).
     *   `crud.py`: Logika transaksi database untuk operasi data operasional.
-    *   `requirements.txt`: Daftar pustaka Python yang diperlukan.
+    *   `requirements.txt`: Daftar pustaka Python (`fastapi`, `ultralytics`, `paddlex`, `paddlepaddle`, `pytesseract`, dll).
 *   `📁 frontend-mobile/`: Aplikasi web ramah ponsel (PWA/mobile layout) dengan akses kamera terintegrasi untuk operator lapangan (Port `3001`).
-*   `📁 frontend-dashboard/`: Aplikasi web analitik dan manajemen instrumen untuk supervisor dan manajer (Port `3000`).
+*   `📁 frontend-dashboard/`: Aplikasi web analitik, verifikasi hasil OCR, dan manajemen model untuk supervisor/manajer (Port `3000`).
 *   `📁 database/`: Tempat penyimpanan data persisten:
     *   `init.sql`: Skema inisialisasi basis data PostgreSQL untuk deployment pertama.
     *   `panels.json` & `readings.json`: Basis data lokal fallback otomatis jika PostgreSQL tidak dijalankan.
     *   `memory.json`: Berkas memori koreksi mandiri (*self-learning memory*) hasil verifikasi manajer.
     *   `📁 foto/`: Penyimpanan gambar panel yang dikelompokkan rapi per tanggal dan shift kerja.
-*   `start_backend.bat`: Skrip otomatis Windows untuk inisialisasi lingkungan `.venv` dan menjalankan backend sekali klik.
+*   `start_backend.bat` & `start_backend.sh`: Skrip otomatis Windows & macOS/Linux untuk inisialisasi `.venv` dan menjalankan backend sekali klik.
 *   `docker-compose.yml`: Konfigurasi orkestrasi kontainer Docker (PostgreSQL, Backend, Mobile, Dashboard).
 
 ---
@@ -64,12 +71,15 @@ graph TD
 Sebelum menjalankan aplikasi di lingkungan pengembang lokal Windows, pastikan software berikut telah terpasang:
 
 1.  **Node.js (versi 18.x LTS atau lebih baru)**: [Unduh Node.js](https://nodejs.org/).
-2.  **Python (versi 3.9 s.d 3.11)**: [Unduh Python](https://www.python.org/). Pastikan opsi *"Add Python to PATH"* dicentang saat instalasi.
-3.  **Tesseract OCR Engine**:
+2.  **Python (versi 3.10 atau 3.11 disarankan)**: [Unduh Python](https://www.python.org/). Pastikan opsi *"Add Python to PATH"* dicentang saat instalasi. Dependensi Python mencakup `fastapi`, `ultralytics`, `paddlex`, `paddlepaddle`, `opencv-contrib-python`, dan `pytesseract`.
+3.  **Tesseract OCR Engine (Fallback Recognition)**:
     *   Unduh installer Windows resmi dari [UB-Mannheim Tesseract](https://github.com/UB-Mannheim/tesseract/wiki).
     *   Pasang di lokasi default: `C:\Program Files\Tesseract-OCR\tesseract.exe`.
     *   Backend secara otomatis mendeteksi direktori instalasi standar ini.
-4.  **Docker Desktop (Opsional, jika ingin menjalankan dengan PostgreSQL)**:
+4.  **File Model AI (YOLO & PaddleOCR)**:
+    *   Letakkan `yolo_device_detect.pt` dan `yolo_text_detect.pt` di `backend/models/`.
+    *   Letakkan paket model inferensi PaddleOCR pada `backend/models/power_meter_rec_inference/PaddleOCR/inference/power_meter_rec`. (Dapat juga diunggah via Web Dashboard).
+5.  **Docker Desktop (Opsional, jika ingin menjalankan dengan PostgreSQL)**:
     *   [Unduh Docker Desktop](https://www.docker.com/products/docker-desktop/).
 
 ---
@@ -152,11 +162,11 @@ docker compose down
 1.  Buka `http://localhost:3000` pada komputer kerja.
 2.  Data hasil foto dari lapangan akan langsung muncul di tabel utama melalui update *real-time* SSE (badge status akan otomatis berganti dari `PROCESSING` menjadi `COMPLETED`).
 3.  Klik baris log untuk membuka jendela inspeksi:
-    *   Sisi kiri menampilkan foto asli resolusi tinggi dari display panel.
-    *   Sisi kanan menampilkan nilai angka yang diekstraksi otomatis oleh AI.
+     *   Sisi kiri menampilkan foto asli resolusi tinggi dari display panel.
+     *   Sisi kanan menampilkan nilai angka yang diekstraksi otomatis oleh AI.
 4.  Jika ada angka yang kurang tepat (misalnya karakter 8 terbaca B akibat pantulan cahaya):
-    *   Ubah angka secara manual pada kolom input.
-    *   Klik **"Verify & Approve"**.
+     *   Ubah angka secara manual pada kolom input.
+     *   Klik **"Verify & Approve"**.
 5.  Sistem akan menyimpan nilai terverifikasi dan secara cerdas memperbarui **Self-Correction Memory** agar akurasi pembacaan berikutnya semakin tinggi.
 6.  Gunakan tab **"Export"** untuk mengunduh rekap dalam format Excel/CSV atau sinkronisasi langsung ke Google Sheets.
 
@@ -164,13 +174,17 @@ docker compose down
 
 ## 🧠 5. Fitur Cerdas & Optimasi OCR
 
-1. **Auto Deskewing:**
-   Sistem mengoreksi orientasi foto yang miring hingga $\pm 45^\circ$ secara otomatis menggunakan transformasi Hough Lines pada OpenCV.
-2. **Dynamic Contrast Enhancement (CLAHE):**
-   Mempertegas karakter 7-segment yang redup pada display LCD berlatar belakang backlight hijau/biru.
-3. **Adaptive Self-Learning Memory:**
-   Tiap koreksi manual oleh manajer melatih model pencocokan spasial tanpa perlu melakukan training ulang model deep learning yang memakan waktu lama.
-4. **Dual Persistence Architecture:**
+1. **Hybrid Dual-Engine Recognition (PaddleOCR + Tesseract Fallback):**
+   Memanfaatkan arsitektur `en_PP-OCRv4_mobile_rec` (via PaddleX) sebagai engine recognition utama pada setiap potongan kotak digit. Model ini memiliki akurasi pengenalan sangat tinggi untuk karakter dot-matrix dan 7-segment digital meteran listrik. Jika PaddleOCR menghasilkan nilai kosong, sistem otomatis mengalihkan pembacaan ke Tesseract OCR.
+2. **Auto Deskewing:**
+   Sistem mengoreksi orientasi foto yang miring hingga $\pm 30^\circ$ secara otomatis menggunakan transformasi Hough Lines pada OpenCV.
+3. **Dynamic Contrast Enhancement & 6-Step Crop Preprocessing:**
+   Melakukan penskalaan tinggi presisi (Lanczos-4 H=70), binarisasi Otsu, inversi warna, dan erosi morfologi untuk memperjelas segmen angka jika diproses melalui engine Tesseract.
+4. **Adaptive Self-Learning Memory:**
+   Tiap koreksi manual oleh manajer melatih indeks pemetaan spasial tanpa perlu melakukan training ulang model deep learning yang memakan waktu lama.
+5. **Hot-Reload Model Upload via Dashboard:**
+   Manager dapat mengunggah paket model PaddleOCR baru dalam format `.zip` serta model YOLO (`.pt`) secara langsung dari Web Dashboard tanpa perlu menyentuh server atau menghentikan layanan.
+6. **Dual Persistence Architecture:**
    Jika PostgreSQL sedang dimatikan atau mengalami gangguan jaringan, backend otomatis beroperasi menggunakan penyimpanan lokal JSON tanpa kehilangan data operasional.
 
 ---
@@ -190,11 +204,16 @@ Get-Process -Id (Get-NetTCPConnection -LocalPort 3000).OwningProcess | Stop-Proc
 Get-Process -Id (Get-NetTCPConnection -LocalPort 3001).OwningProcess | Stop-Process -Force
 ```
 
-### 🔴 2. Error Tesseract: `tesseract is not installed or it's not in your PATH`
+### 🔴 2. Pesan Log PaddleOCR: Model Tidak Ditemukan / Gagal Dimuat
+*   Periksa apakah folder `backend/models/power_meter_rec_inference/PaddleOCR/inference/power_meter_rec` tersedia dan memiliki berkas model.
+*   Anda dapat mengunggah berkas `power_meter_rec_inference.zip` melalui Web Dashboard (menu Upload Model) lalu me-restart backend.
+*   *Catatan Keandalan:* Jika PaddleOCR belum terpasang atau gagal dimuat, sistem tetap dapat beroperasi secara normal (*graceful fallback*) dengan memanfaatkan Tesseract OCR.
+
+### 🔴 3. Error Tesseract: `tesseract is not installed or it's not in your PATH`
 *   Pastikan Tesseract OCR terinstal di `C:\Program Files\Tesseract-OCR\tesseract.exe`.
 *   Jika diinstal di direktori lain, tambahkan folder binari tersebut ke dalam variabel lingkungan sistem Windows (`PATH`), lalu buka kembali terminal PowerShell Anda.
 
-### 🔴 3. Backend Gagal Terhubung ke PostgreSQL
+### 🔴 4. Backend Gagal Terhubung ke PostgreSQL
 *   Pastikan service PostgreSQL berjalan (misalnya melalui Docker: `docker compose up -d postgres`).
 *   Jika Anda tidak ingin menggunakan PostgreSQL saat pengujian mandiri, biarkan backend berjalan seperti biasa—backend secara otomatis akan menggunakan database file JSON lokal (`database/panels.json` & `database/readings.json`) sebagai fallback.
 

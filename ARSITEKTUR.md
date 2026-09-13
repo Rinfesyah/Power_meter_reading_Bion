@@ -23,10 +23,11 @@ flowchart TB
     end
 
     subgraph AIEngine ["🧠 AI / Computer Vision Engine"]
-        YoloDev["YOLOv8 Device Detection<br/>(LCD Bounding Box)"]
-        CVPre["OpenCV Preprocessing<br/>(Deskew, CLAHE, Otsu Binarization)"]
-        YoloText["YOLOv8 Text Detection<br/>(Line Regions)"]
-        Tesseract["Tesseract OCR Engine<br/>(UB-Mannheim Engine)"]
+        YoloDev["YOLOv8 Device Detection<br/>(yolo_device_detect.pt)"]
+        CVPre["OpenCV Preprocessing<br/>(Deskew Hough Lines, Contrast, Binarization)"]
+        YoloText["YOLOv8 Text Detection<br/>(yolo_text_detect.pt)"]
+        PaddleOCR["PaddleOCR Engine (PP-OCRv4 Mobile)<br/>Primary Digit & Text Recognition"]
+        Tesseract["Tesseract OCR Engine<br/>Secondary Fallback Recognition"]
         SpatialMatcher["Spatial & Heuristic Matcher<br/>+ Self-Correction Memory"]
     end
 
@@ -40,6 +41,7 @@ flowchart TB
     Mobile -->|"1. POST /api/ocr (Multipart Form: Image + Metadata)"| API
     Dashboard -->|"GET /api/readings, GET /api/equipments"| API
     Dashboard -->|"PUT /api/readings/{id} (Manual Verify / Edit)"| API
+    Dashboard -->|"POST /api/models/upload/paddleocr (Model Hot-Upload)"| API
     API -->|"Event Push (ocr_complete, ocr_update)"| SSE
     SSE -.->|"Real-Time Push Stream"| Dashboard
     SSE -.->|"Real-Time Push Stream"| Mobile
@@ -55,7 +57,9 @@ flowchart TB
     Worker -->|"6. Run Pipeline"| YoloDev
     YoloDev --> CVPre
     CVPre --> YoloText
-    YoloText --> Tesseract
+    YoloText --> PaddleOCR
+    PaddleOCR -->|Hasil Baca Sukses| SpatialMatcher
+    PaddleOCR -.->|Fallback jika Kosong/Gagal| Tesseract
     Tesseract --> SpatialMatcher
 
     %% AI to DB
@@ -77,7 +81,7 @@ sequenceDiagram
     participant Mob as Frontend Mobile (3001)
     participant API as FastAPI Backend (8000)
     participant Q as Worker Queue
-    participant AI as OCR Engine (OpenCV/YOLO/Tesseract)
+    participant AI as OCR Engine (YOLO/PaddleOCR/Tesseract)
     participant DB as PostgreSQL / JSON
     participant SSE as SSE Stream Channel
     participant Dash as Web Dashboard (3000)
@@ -93,10 +97,11 @@ sequenceDiagram
 
     loop Worker Thread
         Q->>AI: Ambil antrean & eksekusi process_image()
-        AI->>AI: 1. Crop LCD (YOLO/Heuristik)
-        AI->>AI: 2. Deskewing (Rotasi otomatis)
-        AI->>AI: 3. Deteksi baris angka & OCR Tesseract
-        AI->>AI: 4. Spatial Matching nilai vs nama parameter
+        AI->>AI: 1. Crop LCD (YOLO Device Detect / OpenCV Fallback)
+        AI->>AI: 2. Deskewing (Rotasi otomatis Hough Lines)
+        AI->>AI: 3. Deteksi kotak teks (YOLO Text Detect)
+        AI->>AI: 4. Text Recognition: PaddleOCR (Utama) & Tesseract (Fallback)
+        AI->>AI: 5. Spatial Matching nilai vs nama parameter
         AI->>DB: Simpan nilai OCR per parameter (Status: COMPLETED)
         AI->>SSE: Broadcast "ocr_completed"
         SSE-->>Dash: Update tabel realtime & hilangkan badge loading
@@ -205,39 +210,88 @@ erDiagram
 
 ## 🧠 4. Pipeline Computer Vision & AI OCR
 
-Pipeline pengenalan optik dirancang khusus untuk menangani tantangan display digital data center (layar LCD 7-segment / dot matrix dengan pantulan cahaya, sudut miring, dan pencahayaan minim).
+Pipeline pengenalan optik dirancang khusus untuk menangani tantangan display digital data center (layar LCD 7-segment / dot matrix dengan pantulan backlight, sudut kemiringan miring, pencahayaan minim, dan format metrik multi-baris seperti Schneider PowerLogic).
+
+Sistem menerapkan pendekatan **Hybrid Multi-Stage Pipeline** yang memadukan keunggulan **YOLOv8** untuk lokalisasi objek/teks, **PaddleOCR (PP-OCRv4 Mobile)** untuk pembacaan karakter berakurasi tinggi, dan **Tesseract OCR** sebagai mekanisme *fail-safe fallback*.
 
 ```mermaid
-flowchart LR
-    subgraph S1 ["1. Device Detection"]
-        Raw["Foto Mentah"] --> YoloCrop{"Model YOLO<br/>Tersedia?"}
-        YoloCrop -->|Ya| YoloBox["Deteksi Box Layar LCD<br/>+ 10% Margin"]
-        YoloCrop -->|Tidak| CVContour["Heuristik OpenCV:<br/>Kontur Terang Terbesar /<br/>Top 75% Crop"]
+flowchart TD
+    subgraph S1 ["1. Device & LCD Detection"]
+        Raw["Foto Mentah Lapangan"] --> YoloDevCheck{"Model YOLO Device<br/>Tersedia?"}
+        YoloDevCheck -->|Ya| YoloDev["YOLOv8 Device Detection<br/>(yolo_device_detect.pt, conf=0.01)<br/>+ 5% Padding"]
+        YoloDevCheck -->|Tidak / Gagal| CVContour["Heuristik OpenCV LCD Fallback:<br/>Gaussian Blur + Otsu/High Thresh<br/>+ Deteksi Kontur Segiempat"]
+        CVContour -->|Jika Masih Gagal| FallbackCrop["Potong 25% Area Atas<br/>(Abaikan label panel)"]
     end
 
     subgraph S2 ["2. Deskewing & Orientasi"]
-        YoloBox --> Hough["Hough Line Transform"]
-        CVContour --> Hough
-        Hough --> Rotate["Koreksi Sudut Kemiringan<br/>(Rotasi Otomatis)"]
+        YoloDev --> Deskew["Canny Edge + HoughLinesP<br/>Hitung Median Sudut Kemiringan"]
+        CVContour --> Deskew
+        FallbackCrop --> Deskew
+        Deskew --> Warp["Warp Affine Rotation<br/>(Koreksi Kemiringan -30° s/d +30°)"]
     end
 
-    subgraph S3 ["3. Enhancement & Binarization"]
-        Rotate --> Gray["Grayscale Conversion"]
-        Gray --> CLAHE["Peningkatan Kontras Dinamis<br/>(CLAHE)"]
-        CLAHE --> Scale["Super-scaling 2.0x"]
-        Scale --> Otsu["Otsu Threshold Binarization<br/>+ Pixel Morphological Erosion"]
+    subgraph S3 ["3. Text Region Detection & NMS"]
+        Warp --> YoloText["YOLOv8 Text Detection<br/>(yolo_text_detect.pt, conf > 0.5)"]
+        YoloText --> NMS["Manual NMS Deduplication<br/>(Filter IoU > 0.4 & Sort Top-to-Bottom)"]
     end
 
-    subgraph S4 ["4. Text Extraction & Matching"]
-        Otsu --> Tess["Tesseract OCR Engine<br/>(--psm 6 / digit whitelist)"]
-        Tess --> Matcher{"Spatial Matcher"}
-        Matcher -->|Garis Sama / Kolom Kanan| Result["Assign Nilai ke Parameter"]
-        Matcher -->|Gagal Spasial| Mem["Self-Correction Memory<br/>(Fallback Indeks Baris)"]
-        Mem --> Result
+    subgraph S4 ["4. Dual Recognition Engine (OCR)"]
+        NMS --> CropEach["Potong Setiap Box Karakter"]
+        CropEach --> PaddleCheck{"PaddleOCR Engine<br/>Tersedia & Siap?"}
+        PaddleCheck -->|Ya (Prioritas 1)| Paddle["PaddleOCR (PaddleX en_PP-OCRv4_mobile_rec)<br/>Inference langsung pada Crop Asli"]
+        PaddleCheck -->|Tidak / Gagal / Output Kosong| PreTess["6-Step OpenCV Preprocessing:<br/>Resize Lanczos (H=70) + Otsu Binarization<br/>+ Inversion + Morphological Erode + Padding"]
+        Paddle -->|Hasil Teks Kosong| PreTess
+        PreTess --> TessBox["Tesseract OCR Engine<br/>(--psm 7 Single Line)"]
+    end
+
+    subgraph S5 ["5. Post-Processing & Spatial Matching"]
+        Paddle -->|Teks & Skor Valid| RowCluster["Row Clustering Spasial<br/>(Toleransi vertikal 50% box height)"]
+        TessBox -->|Teks Valid| RowCluster
+        Warp -.->|Cadangan Terakhir| FullTess["Full-Display Fallback OCR<br/>(Tesseract --psm 6)"]
+        FullTess -.-> StratC
+        
+        RowCluster --> StratA["Strategi A: Spatial Row Anchor<br/>(Pencocokan Label Kiri ➔ Angka Kanan)"]
+        StratA --> StratB["Strategi B: Adaptive Self-Correction Memory<br/>(Fallback Indeks Baris dari memory.json)"]
+        StratB --> StratC["Strategi C: Labeled Pairs Regex Parser<br/>(Vavg, Iavg, Ptot, E Del + Unit)"]
+        StratC --> Final["Nilai Parameter Terbaca<br/>(Vavg, Iavg, Ptot, E Del, dll)"]
     end
 ```
 
-### Karakteristik Unggulan Pipeline:
+### 4.1 Rincian Tahapan Pipeline
+
+1. **Step 1: Device Detection (LCD Cropping)**
+   - Menggunakan model `yolo_device_detect.pt` dengan ambang batas *confidence* 0.01 dan ekspansi margin 5% agar area angka dan satuan tidak terpotong.
+   - Jika YOLO tidak mendeteksi display atau model belum diunduh, sistem menjalankan *OpenCV LCD detection fallback* yang mencari kontur persegi panjang berlatar terang pada kuadran tengah-bawah gambar.
+2. **Step 2: Deskewing Otomatis**
+   - Mendeteksi garis tepi melalui `cv2.Canny` dan `cv2.HoughLinesP`.
+   - Mengambil median kemiringan sudut (rentang valid: $0.5^\circ < |\theta| < 30^\circ$) dan merotasi citra display secara presisi menggunakan `cv2.warpAffine` dengan interpolasi bicubic.
+3. **Step 3: Text Detection & Deduplikasi Spasial (NMS)**
+   - Menggunakan model `yolo_text_detect.pt` pada display yang telah lurus untuk melokalisasi baris angka dan label (ambang batas `conf > 0.5`).
+   - Menerapkan algoritma *Non-Maximum Suppression* (NMS) manual untuk membuang kotak deteksi ganda dengan *Intersection-over-Union* (IoU) $> 0.4$, lalu mengurutkan kotak dari atas ke bawah.
+4. **Step 4: Dual Recognition Engine (PaddleOCR + Tesseract Fallback)**
+   - **Prioritas 1 (PaddleOCR PP-OCRv4 Mobile)**:
+     - Dikelola melalui modul `paddlex` (`import paddlex as px`).
+     - Memuat arsitektur `en_PP-OCRv4_mobile_rec` dari direktori `backend/models/power_meter_rec_inference/PaddleOCR/inference/power_meter_rec`.
+     - Dijalankan langsung pada citra crop berwarna asli. Model ini dirancang khusus untuk mengenali karakter teks dan digit dengan latensi inferensi ultra-cepat (< 30 ms per crop) dan ketahanan sangat tinggi terhadap distorsi font LCD dot-matrix dan 7-segment.
+   - **Prioritas 2 (Fallback Tesseract OCR)**:
+     - Jika PaddleOCR tidak terinstal, bobot model belum dimuat, atau menghasilkan pembacaan kosong, sistem mengalihkan crop ke Tesseract OCR (`--psm 7`).
+     - Citra crop diproses terlebih dahulu melalui 6 tahap: konversi grayscale, penskalaan tinggi menjadi 70 px dengan interpolasi Lanczos-4, binarisasi Otsu, inversi kontras (memastikan digit berwarna hitam dengan latar putih), erosi morfologi untuk memperjelas sambungan segmen angka, serta penambahan *border padding* putih 20-50 px.
+   - **Prioritas 3 (Full-Display Fallback)**:
+     - Jika kotak deteksi YOLO sangat sedikit, sistem menjalankan Tesseract pada seluruh area display LCD (`--psm 6`) sebagai jaring pengaman terakhir.
+5. **Step 5: Multi-Strategy Spatial & Memory Matching**
+   - **Strategi A (Spatial Row-Based Anchor)**: Mengelompokkan item yang memiliki koordinat Y berdekatan (toleransi $50\%$ tinggi kotak). Pasangan label di sisi kiri (seperti `Vavg`, `Iavg`, `Ptot`, `E Del`) secara otomatis dipasangkan dengan nilai numerik terdekat di sisi kanan pada baris yang sama.
+   - **Strategi B (Adaptive Self-Correction Memory)**: Jika pencocokan spasial tidak menemukan pasangan, sistem membuka berkas `database/memory.json` untuk memetakan indeks baris rekaman historis yang pernah diverifikasi oleh manajer.
+   - **Strategi C (Regex Labeled Pairs Parser)**: Mengekstrak pola `[Label] [Angka] [Satuan]` dari teks mentah untuk mengidentifikasi metrik standar (*synonym mapping* mencakup variasi OCR seperti `v ave`, `1.avg`, `iawg`, `pwr`, dsb).
+
+### 4.2 Manajemen & Hot-Upload Model AI
+
+Sistem menyediakan integrasi penuh antara antarmuka Web Dashboard dan backend untuk memperbarui bobot model AI tanpa perlu menghentikan (*downtime*) server:
+* `POST /api/models/upload/paddleocr`: Menerima arsip `.zip` model inferensi PaddleOCR, mengekstrak secara otomatis ke `backend/models/power_meter_rec_inference`, dan siap dimuat ulang.
+* `POST /api/models/upload/yolo-device`: Mengunggah bobot deteksi panel/display (`.pt`).
+* `POST /api/models/upload/yolo-text`: Mengunggah bobot deteksi teks/digit (`.pt`).
+* `POST /api/models/upload/tesseract`: Mengunggah model bahasa kustom Tesseract (`.traineddata`).
+
+### 4.3 Karakteristik Unggulan Pipeline:
 1. **Adaptive Self-Correction Memory:**
    * Saat operator atau manajer mengedit nilai OCR yang keliru melalui Dashboard Web, sistem memanggil fungsi `learn_correction()`.
    * Sistem mencatat indeks posisi baris teks tempat nilai yang benar berada, sehingga pada pembacaan berikutnya untuk tipe panel yang sama, AI langsung memprioritaskan baris tersebut.
